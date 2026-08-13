@@ -43,7 +43,7 @@ export default async function PortalResourcesPage() {
               {items.map((r: Resource) => (
                 <a key={r.id} href={r.file_url ?? undefined} target="_blank" rel="noopener noreferrer"
                   className="bg-white rounded-xl border border-gray-100 p-5 hover:-translate-y-0.5 hover:shadow-md hover:border-gold/30 transition-all flex gap-4 items-start">
-                  <div className="text-3xl shrink-0">{TYPE_ICONS[r.type] || '📄'}</div>
+                  <div className="text-3xl shrink-0">{TYPE_ICONS[r.type || 'other']}</div>
                   <div>
                     <div className="font-medium text-navy text-sm">{r.title}</div>
                     {r.description && <p className="text-gray-500 text-xs mt-1 leading-relaxed">{r.description}</p>}

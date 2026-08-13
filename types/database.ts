@@ -25,6 +25,7 @@ export interface Post {
   slug: string
   content: string | null
   excerpt: string | null
+  cover_image_url: string | null
   category: PostCategory
   read_time: string | null
   published: boolean
