@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 
@@ -21,7 +21,7 @@ export default function SignupPage() {
     if (form.password !== form.confirm) { setError('Passwords do not match.'); return }
     if (form.password.length < 8) { setError('Password must be at least 8 characters.'); return }
     setLoading(true)
-    const supabase = createBrowserClient()
+    const supabase = createClient()
     const { error: err } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,

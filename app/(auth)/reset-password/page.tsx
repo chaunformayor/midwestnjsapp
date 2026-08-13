@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createBrowserClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 
@@ -18,7 +18,7 @@ export default function ResetPasswordPage() {
     if (password !== confirm) { setError('Passwords do not match.'); return }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
     setLoading(true)
-    const supabase = createBrowserClient()
+    const supabase = createClient()
     const { error: err } = await supabase.auth.updateUser({ password })
     if (err) { setError(err.message); setLoading(false); return }
     router.push('/portal')

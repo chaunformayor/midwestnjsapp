@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createBrowserClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { Input, Select } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import Editor from '@/components/admin/Editor'
@@ -28,7 +28,7 @@ export default function NewPostPage() {
   async function handleSave() {
     setLoading(true)
     setError('')
-    const supabase = createBrowserClient()
+    const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     const { error: err } = await supabase.from('posts').insert({
       ...form, body, published,

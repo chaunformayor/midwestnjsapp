@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { Input, Select } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { fmtDate } from '@/lib/utils'
@@ -11,7 +11,7 @@ export default function AdminResourcesPage() {
   const [form, setForm] = useState({ title: '', description: '', file_url: '', type: 'guide' })
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
-  const supabase = createBrowserClient()
+  const supabase = createClient()
 
   async function load() {
     const { data } = await supabase.from('resources').select('*').order('created_at', { ascending: false })

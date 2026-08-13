@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { createBrowserClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import type { Profile } from '@/types/database'
@@ -9,7 +9,7 @@ export default function PortalProfilePage() {
   const [profile, setProfile] = useState<Partial<Profile>>({})
   const [form, setForm] = useState({ full_name: '', phone: '' })
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
-  const supabase = createBrowserClient()
+  const supabase = createClient()
 
   useEffect(() => {
     async function load() {

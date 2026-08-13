@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, FolderOpen, BookOpen, UserCircle, LogOut, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { createBrowserClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
 const NAV = [
@@ -18,7 +18,7 @@ export default function PortalSidebar() {
   const router = useRouter()
 
   async function handleSignOut() {
-    const supabase = createBrowserClient()
+    const supabase = createClient()
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()
