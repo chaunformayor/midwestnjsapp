@@ -91,7 +91,7 @@ export default async function PortalDashboard() {
           {resources && resources.length > 0 ? (
             <div className="flex flex-col gap-3">
               {resources.map(r => (
-                <a key={r.id} href={r.file_url} target="_blank" rel="noopener noreferrer"
+                <a key={r.id} href={r.file_url ?? undefined} target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0 hover:text-gold transition">
                   <span className="text-xl">📄</span>
                   <div>

@@ -82,7 +82,7 @@ export default function AdminResourcesPage() {
               {resources.map(r => (
                 <tr key={r.id} className="hover:bg-gray-50 transition">
                   <td className="px-5 py-4">
-                    <a href={r.file_url} target="_blank" rel="noopener noreferrer" className="font-medium text-navy hover:text-gold transition">{r.title}</a>
+                    <a href={r.file_url ?? undefined} target="_blank" rel="noopener noreferrer" className="font-medium text-navy hover:text-gold transition">{r.title}</a>
                     {r.description && <div className="text-xs text-gray-400 mt-0.5">{r.description}</div>}
                   </td>
                   <td className="px-5 py-4 text-gray-500 capitalize">{r.type}</td>
