@@ -10,11 +10,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
+  const nameParts = String(name).trim().split(/\s+/)
+  const first_name = nameParts[0] || name
+  const last_name = nameParts.slice(1).join(' ') || ''
+
   // Save to DB — non-fatal if Supabase isn't configured yet
   try {
     const supabase = createAdminClient()
     const { error } = await supabase.from('contact_submissions').insert({
-      name, email, phone, subject, message,
+      first_name, last_name, email, phone: phone || null,
+      inquiry_type: subject || null, message,
     })
     if (error) console.error('contact insert error', error)
   } catch (err) {
