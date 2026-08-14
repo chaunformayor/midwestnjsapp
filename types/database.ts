@@ -26,6 +26,7 @@ export interface Post {
   content: string | null
   excerpt: string | null
   category: PostCategory
+  cover_image_url: string | null
   read_time: string | null
   published: boolean
   published_at: string | null
