@@ -1,7 +1,31 @@
-import { Resend } from 'resend'
+import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2'
 
-function getResend() {
-  return new Resend(process.env.RESEND_API_KEY ?? 'placeholder')
+function getSES() {
+  return new SESv2Client({
+    region: process.env.AWS_SES_REGION ?? 'us-east-1',
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
+    },
+  })
+}
+
+async function sendEmail({ from, to, replyTo, subject, html }: {
+  from: string; to: string | string[]; replyTo?: string; subject: string; html: string
+}) {
+  const toAddresses = Array.isArray(to) ? to : [to]
+  const cmd = new SendEmailCommand({
+    FromEmailAddress: from,
+    Destination: { ToAddresses: toAddresses },
+    ReplyToAddresses: replyTo ? [replyTo] : undefined,
+    Content: {
+      Simple: {
+        Subject: { Data: subject, Charset: 'UTF-8' },
+        Body: { Html: { Data: html, Charset: 'UTF-8' } },
+      },
+    },
+  })
+  await getSES().send(cmd)
 }
 
 const FROM = 'Midwest Investor Services <info@midwestinvestorservices.com>'
@@ -26,7 +50,7 @@ function baseLayout(body: string) {
 export async function sendContactNotification(data: {
   name: string; email: string; phone?: string; subject?: string; message: string
 }) {
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: ADMIN_EMAIL, replyTo: data.email,
     subject: `New Contact: ${data.name}${data.subject ? ` — ${data.subject}` : ''}`,
     html: `<h2>New contact form submission</h2>
@@ -35,7 +59,7 @@ export async function sendContactNotification(data: {
         ${row('Subject', data.subject || '')}${row('Message', data.message)}
       </table>`,
   })
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: data.email,
     subject: 'We received your message — Midwest Investor Services',
     html: baseLayout(`
@@ -53,7 +77,7 @@ export async function sendDealNotification(data: {
   arv?: string | number; rehabEstimate?: string | number
   propertyType?: string; notes?: string
 }) {
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: DEALS_EMAIL, replyTo: data.submitterEmail,
     subject: `Deal Submission — ${data.propertyAddress}`,
     html: `<h2>New deal submission</h2>
@@ -67,7 +91,7 @@ export async function sendDealNotification(data: {
         ${row('Notes', data.notes || '')}
       </table>`,
   })
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: data.submitterEmail,
     subject: 'Deal Received — Midwest Investor Services',
     html: baseLayout(`
@@ -81,12 +105,12 @@ export async function sendDealNotification(data: {
 }
 
 export async function sendSubscribeConfirmation(data: { email: string; name?: string }) {
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: ADMIN_EMAIL,
     subject: `New Investor List Signup — ${data.email}`,
     html: `<p>New subscriber: <strong>${data.name || '—'}</strong> &lt;${data.email}&gt;</p>`,
   })
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: data.email,
     subject: "You're on the MIS Investor List",
     html: baseLayout(`
@@ -103,7 +127,7 @@ export async function sendSubscribeConfirmation(data: { email: string; name?: st
 }
 
 export async function sendInvestorApproved(data: { email: string; name?: string }) {
-  await getResend().emails.send({
+  await sendEmail({
     from: FROM, to: data.email,
     subject: 'Your Investor Portal Access is Approved — Midwest Investor Services',
     html: baseLayout(`

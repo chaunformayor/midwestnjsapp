@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { sendInvestorApproved } from '@/lib/resend'
+import { sendInvestorApproved } from '@/lib/ses'
 
 export async function POST(req: NextRequest) {
   const { userId, email, name } = await req.json()

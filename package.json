@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1111.0",
     "@hookform/resolvers": "^3.9.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.46.2",
@@ -26,7 +27,6 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.1",
-    "resend": "^4.0.1",
     "tailwind-merge": "^2.5.5",
     "zod": "^3.23.8"
   },

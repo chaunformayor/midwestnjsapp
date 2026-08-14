@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-import { sendDealNotification } from '@/lib/resend'
+import { sendDealNotification } from '@/lib/ses'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
