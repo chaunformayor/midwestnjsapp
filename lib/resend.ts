@@ -1,6 +1,8 @@
 import { Resend } from 'resend'
 
-export const resend = new Resend(process.env.RESEND_API_KEY)
+function getResend() {
+  return new Resend(process.env.RESEND_API_KEY ?? 'placeholder')
+}
 
 const FROM = 'Midwest Investor Services <info@midwestinvestorservices.com>'
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'info@midwestinvestorservices.com'
@@ -24,7 +26,7 @@ function baseLayout(body: string) {
 export async function sendContactNotification(data: {
   name: string; email: string; phone?: string; subject?: string; message: string
 }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: ADMIN_EMAIL, replyTo: data.email,
     subject: `New Contact: ${data.name}${data.subject ? ` — ${data.subject}` : ''}`,
     html: `<h2>New contact form submission</h2>
@@ -33,7 +35,7 @@ export async function sendContactNotification(data: {
         ${row('Subject', data.subject || '')}${row('Message', data.message)}
       </table>`,
   })
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: data.email,
     subject: 'We received your message — Midwest Investor Services',
     html: baseLayout(`
@@ -51,7 +53,7 @@ export async function sendDealNotification(data: {
   arv?: string | number; rehabEstimate?: string | number
   propertyType?: string; notes?: string
 }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: DEALS_EMAIL, replyTo: data.submitterEmail,
     subject: `Deal Submission — ${data.propertyAddress}`,
     html: `<h2>New deal submission</h2>
@@ -65,7 +67,7 @@ export async function sendDealNotification(data: {
         ${row('Notes', data.notes || '')}
       </table>`,
   })
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: data.submitterEmail,
     subject: 'Deal Received — Midwest Investor Services',
     html: baseLayout(`
@@ -79,12 +81,12 @@ export async function sendDealNotification(data: {
 }
 
 export async function sendSubscribeConfirmation(data: { email: string; name?: string }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: ADMIN_EMAIL,
     subject: `New Investor List Signup — ${data.email}`,
     html: `<p>New subscriber: <strong>${data.name || '—'}</strong> &lt;${data.email}&gt;</p>`,
   })
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: data.email,
     subject: "You're on the MIS Investor List",
     html: baseLayout(`
@@ -101,7 +103,7 @@ export async function sendSubscribeConfirmation(data: { email: string; name?: st
 }
 
 export async function sendInvestorApproved(data: { email: string; name?: string }) {
-  await resend.emails.send({
+  await getResend().emails.send({
     from: FROM, to: data.email,
     subject: 'Your Investor Portal Access is Approved — Midwest Investor Services',
     html: baseLayout(`

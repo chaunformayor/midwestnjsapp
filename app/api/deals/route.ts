@@ -14,33 +14,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
-  const supabase = createAdminClient()
-  const { error } = await supabase.from('deal_submissions').insert({
-    submitter_name, submitter_email, submitter_phone,
-    property_address,
-    asking_price: Number(asking_price),
-    arv: arv ? Number(arv) : null,
-    rehab_estimate: rehab_estimate ? Number(rehab_estimate) : null,
-    property_type, bedrooms: bedrooms ? Number(bedrooms) : null,
-    bathrooms: bathrooms ? Number(bathrooms) : null,
-    sqft: sqft ? Number(sqft) : null,
-    notes,
-  })
-  if (error) {
-    console.error('deal insert error', error)
-    return NextResponse.json({ error: 'Database error' }, { status: 500 })
+  try {
+    const supabase = createAdminClient()
+    const { error } = await supabase.from('deal_submissions').insert({
+      submitter_name, submitter_email, submitter_phone,
+      property_address,
+      asking_price: Number(asking_price),
+      arv: arv ? Number(arv) : null,
+      rehab_estimate: rehab_estimate ? Number(rehab_estimate) : null,
+      property_type, bedrooms: bedrooms ? Number(bedrooms) : null,
+      bathrooms: bathrooms ? Number(bathrooms) : null,
+      sqft: sqft ? Number(sqft) : null,
+      notes,
+    })
+    if (error) console.error('deal insert error', error)
+  } catch (err) {
+    console.error('deal db error', err)
   }
 
-  await sendDealNotification({
-    submitterName: submitter_name,
-    submitterEmail: submitter_email,
-    submitterPhone: submitter_phone,
-    propertyAddress: property_address,
-    askingPrice: asking_price,
-    arv, rehabEstimate: rehab_estimate,
-    propertyType: property_type,
-    notes,
-  })
+  try {
+    await sendDealNotification({
+      submitterName: submitter_name,
+      submitterEmail: submitter_email,
+      submitterPhone: submitter_phone,
+      propertyAddress: property_address,
+      askingPrice: asking_price,
+      arv, rehabEstimate: rehab_estimate,
+      propertyType: property_type,
+      notes,
+    })
+  } catch (err) {
+    console.error('deal email error', err)
+  }
 
   return NextResponse.json({ ok: true })
 }

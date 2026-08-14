@@ -10,16 +10,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
-  const supabase = createAdminClient()
-  const { error } = await supabase.from('contact_submissions').insert({
-    name, email, phone, subject, message,
-  })
-  if (error) {
-    console.error('contact insert error', error)
-    return NextResponse.json({ error: 'Database error' }, { status: 500 })
+  // Save to DB — non-fatal if Supabase isn't configured yet
+  try {
+    const supabase = createAdminClient()
+    const { error } = await supabase.from('contact_submissions').insert({
+      name, email, phone, subject, message,
+    })
+    if (error) console.error('contact insert error', error)
+  } catch (err) {
+    console.error('contact db error', err)
   }
 
-  await sendContactNotification({ name, email, phone, subject, message })
+  // Send email — non-fatal if Resend isn't configured yet
+  try {
+    await sendContactNotification({ name, email, phone, subject, message })
+  } catch (err) {
+    console.error('contact email error', err)
+  }
 
   return NextResponse.json({ ok: true })
 }
