@@ -123,6 +123,7 @@ export default function Footer() {
               <Link href="/privacy" className="hover:text-gold transition">Privacy Policy</Link>
               <Link href="/terms" className="hover:text-gold transition">Terms of Service</Link>
               <Link href="/login" className="hover:text-gold transition">Investor Portal</Link>
+              <Link href="/login" className="hover:text-gold transition">Admin Login</Link>
             </div>
           </div>
         </div>

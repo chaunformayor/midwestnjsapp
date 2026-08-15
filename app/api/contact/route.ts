@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     console.error('contact db error', err)
   }
 
-  // Send email — non-fatal if Resend isn't configured yet
+  // Send email — non-fatal if SES isn't configured yet
   try {
     await sendContactNotification({ name, email, phone, subject, message })
   } catch (err) {
