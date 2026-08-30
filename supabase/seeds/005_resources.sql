@@ -1,10 +1,10 @@
 -- Seed: starter investor resource library
--- Resources are seeded as published=false so admin can upload actual files
--- before toggling them live. Update file_url and set published=true via the admin UI.
+-- 4 files are pre-built and served from /resources/* (published=true)
+-- 6 require manual file upload via /admin/resources (published=false)
 
 INSERT INTO public.resources (title, description, type, file_url, published, order_index) VALUES
 
--- Templates
+-- Templates (2 need upload, 1 pre-built)
 ('BRRRR Deal Analyzer Spreadsheet',
  'Full underwriting model for BRRRR deals — purchase, rehab, refinance, and cash flow projections all in one sheet.',
  'template', NULL, false, 1),
@@ -15,16 +15,16 @@ INSERT INTO public.resources (title, description, type, file_url, published, ord
 
 ('Rental Property Due Diligence Checklist',
  'Step-by-step checklist for evaluating a property before making an offer — covers inspection, title, zoning, rental history, and financials.',
- 'template', NULL, false, 3),
+ 'template', '/resources/due-diligence-checklist.html', true, 3),
 
 ('Lease Agreement Template (Missouri)',
  'Missouri-compliant residential lease template with standard clauses for maintenance, late fees, and termination.',
  'template', NULL, false, 4),
 
--- Guides
+-- Guides (2 pre-built, 1 needs upload)
 ('First-Time Investor Onboarding Guide',
  'Everything you need to know before your first St. Louis investment property — markets, financing, management, and what to expect.',
- 'guide', NULL, false, 5),
+ 'guide', '/resources/first-time-investor-guide.html', true, 5),
 
 ('St. Louis Neighborhood Investment Guide 2026',
  'A submarket-by-submarket breakdown of St. Louis neighborhoods — cap rates, average rents, appreciation trends, and risk profiles.',
@@ -32,9 +32,9 @@ INSERT INTO public.resources (title, description, type, file_url, published, ord
 
 ('DSCR Loan Guide for Real Estate Investors',
  'How DSCR financing works, what lenders look for, how to qualify, and how to use it to scale your portfolio.',
- 'guide', NULL, false, 7),
+ 'guide', '/resources/dscr-loan-guide.html', true, 7),
 
--- Reports
+-- Reports (need upload)
 ('St. Louis Market Report Q2 2026',
  'Quarterly data on median prices, days on market, rent trends, vacancy rates, and investor activity across St. Louis metro.',
  'report', NULL, false, 8),
@@ -43,7 +43,7 @@ INSERT INTO public.resources (title, description, type, file_url, published, ord
  'Current Housing Choice Voucher payment standards by bedroom size and zip code for St. Louis County.',
  'report', NULL, false, 9),
 
--- Reference
+-- Reference (pre-built)
 ('Investor FAQ: Working With Midwest Investor Services',
  'Answers to the most common questions from investors — fees, process, markets, timelines, and what we handle vs. what you decide.',
- 'reference', NULL, false, 10);
+ 'reference', '/resources/investor-faq.html', true, 10);
