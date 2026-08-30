@@ -1,4 +1,4 @@
-import { createServerClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { fmtDate } from '@/lib/utils'
@@ -9,7 +9,7 @@ export const revalidate = 60
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const supabase = await createServerClient()
+  const supabase = createAdminClient()
   const { data: post } = await supabase.from('posts').select('title, excerpt').eq('slug', slug).single()
   if (!post) return {}
   return { title: post.title, description: post.excerpt }
@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 export default async function BlogPostPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const supabase = await createServerClient()
+  const supabase = createAdminClient()
   const { data: post } = await supabase
     .from('posts')
     .select('*')

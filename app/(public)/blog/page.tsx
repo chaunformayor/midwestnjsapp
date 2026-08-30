@@ -1,4 +1,4 @@
-import { createServerClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { fmtDate } from '@/lib/utils'
 import { Badge } from '@/components/ui/Badge'
@@ -7,7 +7,7 @@ import type { Post } from '@/types/database'
 export const revalidate = 60
 
 export default async function BlogPage() {
-  const supabase = await createServerClient()
+  const supabase = createAdminClient()
   const { data: posts, error: postsError } = await supabase
     .from('posts')
     .select('id, title, slug, excerpt, category, published_at, cover_image_url')
