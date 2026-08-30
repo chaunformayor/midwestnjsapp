@@ -18,13 +18,26 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     const supabase = createBrowserClient()
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error: err } = await supabase.auth.signInWithPassword({ email, password })
     if (err) {
       setError(err.message)
       setLoading(false)
       return
     }
-    router.push('/portal')
+    // Fetch role to decide where to redirect
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, status')
+      .eq('id', data.user.id)
+      .single()
+
+    if (profile?.role === 'admin') {
+      router.push('/admin')
+    } else if (profile?.status === 'pending') {
+      router.push('/pending')
+    } else {
+      router.push('/portal')
+    }
     router.refresh()
   }
 
