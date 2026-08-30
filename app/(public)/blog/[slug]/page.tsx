@@ -53,7 +53,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
         <div className="max-w-3xl mx-auto px-6">
           <div
             className="prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: post.body }}
+            dangerouslySetInnerHTML={{ __html: post.content ?? '' }}
           />
         </div>
       </section>
