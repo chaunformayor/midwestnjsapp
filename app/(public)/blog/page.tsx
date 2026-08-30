@@ -8,11 +8,13 @@ export const revalidate = 60
 
 export default async function BlogPage() {
   const supabase = await createServerClient()
-  const { data: posts } = await supabase
+  const { data: posts, error: postsError } = await supabase
     .from('posts')
     .select('id, title, slug, excerpt, category, published_at, cover_image_url')
     .eq('published', true)
     .order('published_at', { ascending: false })
+  if (postsError) console.error('blog posts error', postsError)
+  console.log('blog posts count', posts?.length ?? 0, 'url', process.env.NEXT_PUBLIC_SUPABASE_URL?.slice(0, 30))
 
   return (
     <>
