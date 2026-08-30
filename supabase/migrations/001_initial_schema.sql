@@ -46,6 +46,7 @@ CREATE TABLE public.posts (
   excerpt       TEXT,
   category      TEXT DEFAULT 'market-report'
                   CHECK (category IN ('market-report','deal-breakdown','strategy','education')),
+  cover_image_url TEXT,
   read_time     TEXT,
   published     BOOLEAN DEFAULT FALSE,
   published_at  TIMESTAMPTZ,
