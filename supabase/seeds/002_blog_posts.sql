@@ -98,7 +98,7 @@ VALUES
 <li><strong>Overpaying for the acquisition.</strong> Your ARV spread determines whether the refinance works. Pay too much upfront and you cannot pull your capital out. Use comps rigorously before every purchase.</li>
 <li><strong>Underestimating rehab costs.</strong> Build a 15–20% contingency into every rehab budget. Older St. Louis housing stock (most was built pre-1970) regularly surfaces surprises — lead paint remediation, old plumbing, knob-and-tube wiring.</li>
 <li><strong>Skipping tenant screening.</strong> A bad tenant in a newly renovated property destroys your cash flow and equity simultaneously. Thorough income verification, credit checks, and landlord references are non-negotiable.</li>
-<li><strong>Using the wrong lender.</strong> Not all lenders understand investment property refinances. Work with DSCR lenders who evaluate the property's rental income, not just your W-2.</li>
+<li><strong>Using the wrong lender.</strong> Not all lenders understand investment property refinances. Work with DSCR lenders who evaluate the property''s rental income, not just your W-2.</li>
 </ul>
 
 <h2>How Midwest Investor Services Executes BRRRR for Our Clients</h2>
