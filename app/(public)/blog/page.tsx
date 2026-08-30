@@ -13,8 +13,6 @@ export default async function BlogPage() {
     .select('id, title, slug, excerpt, category, published_at, cover_image_url')
     .eq('published', true)
     .order('published_at', { ascending: false })
-  if (postsError) console.error('blog posts error', postsError)
-  console.log('blog posts count', posts?.length ?? 0, 'url', process.env.NEXT_PUBLIC_SUPABASE_URL?.slice(0, 30))
 
   return (
     <>
