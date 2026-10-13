@@ -25,6 +25,23 @@ function getSMTP() {
   return smtp
 }
 
+/**
+ * Reads SMTP_FROM leniently: accepts "Name <email>", plain "email", or either
+ * wrapped in quotes or missing the angle brackets. Falls back to the site's
+ * default sender if no email address can be found in it.
+ */
+function smtpFrom(fallback: string): string | { name: string; address: string } {
+  const raw = (process.env.SMTP_FROM ?? '').trim().replace(/^['"]+|['"]+$/g, '').trim()
+  if (!raw) return fallback
+  const m = raw.match(/[^\s<>"',;]+@[^\s<>"',;]+\.[A-Za-z]{2,}/)
+  if (!m) {
+    console.warn('SMTP_FROM has no valid email address in it; using the default sender')
+    return fallback
+  }
+  const name = raw.replace(m[0], '').replace(/[<>"']/g, '').trim()
+  return name ? { name, address: m[0] } : m[0]
+}
+
 function getSES() {
   return new SESv2Client({
     region: process.env.AWS_SES_REGION ?? 'us-east-1',
@@ -41,7 +58,7 @@ async function sendEmail({ from, to, replyTo, subject, html }: {
   const toAddresses = Array.isArray(to) ? to : [to]
   const transport = getSMTP()
   if (transport) {
-    await transport.sendMail({ from: process.env.SMTP_FROM?.trim() || from, to: toAddresses, replyTo, subject, html })
+    await transport.sendMail({ from: smtpFrom(from), to: toAddresses, replyTo, subject, html })
     return
   }
   const cmd = new SendEmailCommand({
