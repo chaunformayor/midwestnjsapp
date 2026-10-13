@@ -17,7 +17,7 @@ function getSMTP() {
     host,
     port,
     secure: port === 465, // 465 uses TLS from the start; 587 upgrades with STARTTLS
-    auth: user ? { user, pass: process.env.SMTP_PASSWORD ?? '' } : undefined,
+    auth: user ? { user, pass: (process.env.SMTP_PASSWORD ?? '').trim() } : undefined, // a stray space or line break here makes the login fail
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
     socketTimeout: 30_000,
