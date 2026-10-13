@@ -1,4 +1,29 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2'
+import nodemailer from 'nodemailer'
+
+// When SMTP_HOST is set, all site email goes through that SMTP server instead
+// of Amazon SES. Leave it unset to use SES.
+//   SMTP_HOST, SMTP_PORT (587 or 465), SMTP_USER, SMTP_PASSWORD,
+//   SMTP_FROM (optional, e.g. "Midwest Investor Services <info@...>"; must be
+//   an address that SMTP account is allowed to send from)
+let smtp: nodemailer.Transporter | null | undefined
+function getSMTP() {
+  if (smtp !== undefined) return smtp
+  const host = (process.env.SMTP_HOST ?? '').trim()
+  if (!host) return (smtp = null)
+  const port = Number(process.env.SMTP_PORT || 587)
+  const user = (process.env.SMTP_USER ?? '').trim()
+  smtp = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465, // 465 uses TLS from the start; 587 upgrades with STARTTLS
+    auth: user ? { user, pass: process.env.SMTP_PASSWORD ?? '' } : undefined,
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 30_000,
+  })
+  return smtp
+}
 
 function getSES() {
   return new SESv2Client({
@@ -14,6 +39,11 @@ async function sendEmail({ from, to, replyTo, subject, html }: {
   from: string; to: string | string[]; replyTo?: string; subject: string; html: string
 }) {
   const toAddresses = Array.isArray(to) ? to : [to]
+  const transport = getSMTP()
+  if (transport) {
+    await transport.sendMail({ from: process.env.SMTP_FROM?.trim() || from, to: toAddresses, replyTo, subject, html })
+    return
+  }
   const cmd = new SendEmailCommand({
     FromEmailAddress: from,
     Destination: { ToAddresses: toAddresses },
