@@ -24,19 +24,24 @@ export default function LoginPage() {
       setLoading(false)
       return
     }
-    // Fetch role to decide where to redirect
+    // Fetch role to decide where to redirect. (profiles has no "status" column;
+    // asking for one made this query fail, which sent admins to /portal.)
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, status')
+      .select('role')
       .eq('id', data.user.id)
       .single()
 
+    // Return to the page that sent them here, if it's a page on this site.
+    const next = new URLSearchParams(window.location.search).get('next') ?? ''
+    const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : ''
+
     if (profile?.role === 'admin') {
-      router.push('/admin')
-    } else if (profile?.status === 'pending') {
+      router.push(safeNext || '/admin')
+    } else if (profile?.role === 'pending') {
       router.push('/pending')
     } else {
-      router.push('/portal')
+      router.push(safeNext.startsWith('/portal') ? safeNext : '/portal')
     }
     router.refresh()
   }
