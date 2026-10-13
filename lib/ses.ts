@@ -145,3 +145,72 @@ export async function sendInvestorApproved(data: { email: string; name?: string 
       <p style="margin-top:32px;color:#6B7280;font-size:14px;">— The MIS Team · 636-590-7698</p>`),
   })
 }
+
+// ---------------------------------------------------------------- client onboarding
+
+function esc(s: string | null | undefined) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
+}
+
+function button(href: string, label: string) {
+  return `<p style="margin:24px 0;"><a href="${esc(href)}" style="background:#C9A84C;color:#0D1B2A;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block;">${esc(label)}</a></p>`
+}
+
+const SIGNOFF = `<p style="margin-top:32px;color:#6B7280;font-size:14px;">— Midwest Investor Services · 636-590-7698 · info@midwestinvestorservices.com</p>`
+
+export async function sendOnboardingInvite(data: { to: string; firstName: string; link: string; engagement: string }) {
+  await sendEmail({
+    from: FROM, to: data.to, replyTo: ADMIN_EMAIL,
+    subject: 'Your Midwest Investor Services onboarding link',
+    html: baseLayout(`
+      <p>Hi ${esc(data.firstName) || 'there'},</p>
+      <p>Thank you for choosing Midwest Investor Services for ${esc(data.engagement.toLowerCase())}. Here is your private link to get started.</p>
+      <p>You'll review and sign our engagement and confidentiality agreements, then answer a questionnaire about your goals and properties and upload a few documents. It takes about 30–45 minutes, and you can stop and come back anytime with the same link.</p>
+      ${button(data.link, 'Start onboarding')}
+      <p style="color:#6B7280;font-size:13px;">This link is just for you. Please don't forward it.</p>
+      ${SIGNOFF}`),
+  })
+}
+
+export async function sendOnboardingSigned(data: { clientEmail: string; firstName: string; client: string; link: string | null; adminUrl: string; folderUrl?: string }) {
+  await sendEmail({
+    from: FROM, to: ADMIN_EMAIL,
+    subject: `Agreements signed — ${data.client}`,
+    html: baseLayout(`
+      <p><strong>${esc(data.client)}</strong> signed the Engagement Agreement and NDA, and so did MIS. The signed PDF is in the client's Nextcloud folder.</p>
+      ${button(data.adminUrl, 'Open in admin')}
+      ${data.folderUrl ? `<p><a href="${esc(data.folderUrl)}" style="color:#A88830;">Open the Nextcloud folder</a></p>` : ''}`),
+  })
+  await sendEmail({
+    from: FROM, to: data.clientEmail, replyTo: ADMIN_EMAIL,
+    subject: 'Your agreements are signed — next, the questionnaire',
+    html: baseLayout(`
+      <p>Hi ${esc(data.firstName) || 'there'},</p>
+      <p>Your Engagement Agreement and NDA are signed. You can download the signed PDF anytime from your onboarding page.</p>
+      <p>Next, answer the questionnaire and upload your documents. Your progress saves as you go.</p>
+      ${data.link ? button(data.link, 'Continue onboarding') : ''}
+      ${SIGNOFF}`),
+  })
+}
+
+export async function sendOnboardingSubmitted(data: { clientEmail: string; firstName: string; client: string; link: string | null; adminUrl: string; docsDone: number; docsTotal: number; folderUrl?: string }) {
+  await sendEmail({
+    from: FROM, to: ADMIN_EMAIL,
+    subject: `Questionnaire submitted — ${data.client}`,
+    html: baseLayout(`
+      <p><strong>${esc(data.client)}</strong> submitted the intake questionnaire. Documents so far: ${data.docsDone} of ${data.docsTotal}.</p>
+      <p>The answers are saved as a PDF in the client's Nextcloud folder.</p>
+      ${button(data.adminUrl, 'Open in admin')}
+      ${data.folderUrl ? `<p><a href="${esc(data.folderUrl)}" style="color:#A88830;">Open the Nextcloud folder</a></p>` : ''}`),
+  })
+  await sendEmail({
+    from: FROM, to: data.clientEmail, replyTo: ADMIN_EMAIL,
+    subject: 'We received your questionnaire',
+    html: baseLayout(`
+      <p>Hi ${esc(data.firstName) || 'there'},</p>
+      <p>Thank you. We received your questionnaire${data.docsDone < data.docsTotal ? ` and ${data.docsDone} of ${data.docsTotal} documents. You can upload the rest anytime from your onboarding link` : ' and documents'}.</p>
+      <p>We'll review everything within two business days and reach out to schedule your strategy meeting.</p>
+      ${data.link && data.docsDone < data.docsTotal ? button(data.link, 'Upload more documents') : ''}
+      ${SIGNOFF}`),
+  })
+}
