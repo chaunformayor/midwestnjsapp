@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextcloudError } from '@/lib/nextcloud'
 import { UserError } from './service'
-import { getEngagementByToken, type Engagement } from './server'
+import { resolveToken, type Engagement, type Person } from './server'
 
 export function fail(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status, headers: { 'Cache-Control': 'no-store' } })
@@ -21,13 +21,13 @@ export function handleError(err: unknown) {
   return fail('Something went wrong on our side. Please try again, or call us at 636-590-7698.', 500)
 }
 
-/** Runs a client handler after looking up the engagement from its private link. */
-export async function withClient(token: string, fn: (e: Engagement) => Promise<Response>) {
+/** Runs a client handler after looking up the engagement and the person from their private link. */
+export async function withClient(token: string, fn: (e: Engagement, person: Person) => Promise<Response>) {
   try {
-    const e = await getEngagementByToken(token)
-    if (!e) return fail('This onboarding link is not valid. Check the link in your email, or contact us for a new one.', 404)
-    if (e.status === 'canceled') return fail('This onboarding was canceled. Please contact us if you need a new link.', 410)
-    return await fn(e)
+    const found = await resolveToken(token)
+    if (!found) return fail('This onboarding link is not valid. Check the link in your email, or contact us for a new one.', 404)
+    if (found.e.status === 'canceled') return fail('This onboarding was canceled. Please contact us if you need a new link.', 410)
+    return await fn(found.e, found.person)
   } catch (err) {
     return handleError(err)
   }

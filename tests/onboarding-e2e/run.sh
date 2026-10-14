@@ -8,6 +8,7 @@
 #   tests/onboarding-e2e/run.sh              build, then test (email through SES stand-in)
 #   tests/onboarding-e2e/run.sh --no-build   reuse the last build
 #   SMTP_HOST=127.0.0.1 tests/onboarding-e2e/run.sh   send email through the SMTP stand-in
+#   E2E_RUNNER=node tests/onboarding-e2e/run.sh      run people-check.mjs (API-level, no browser) instead of the browser test
 #
 # Needs: Node 20+, Python 3 with Playwright (pip install playwright; playwright install chromium).
 # Uses ports 3000, 8899 and 2525. Screenshots and logs go to tests/onboarding-e2e/out/.
@@ -47,4 +48,8 @@ ADMIN_EMAIL=admin@example.com \
   node_modules/.bin/next start -p 3000 -H 127.0.0.1 > "$OUT/next.log" 2>&1 & PIDS+=($!)
 for _ in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:3000/ && break; sleep 0.5; done
 
-python3 "$HERE/run_e2e.py" "$ACCESS"
+if [ "${E2E_RUNNER:-python}" = "node" ]; then
+  node "$HERE/people-check.mjs" "$ACCESS"   # no browser needed: per-person flow, folders, certificate
+else
+  python3 "$HERE/run_e2e.py" "$ACCESS"
+fi

@@ -12,7 +12,7 @@ type Ctx = { params: Promise<{ token: string }> }
  */
 export async function POST(req: Request, { params }: Ctx) {
   const { token } = await params
-  return withClient(token, async (e) => {
+  return withClient(token, async (e, p) => {
     const u = new URL(req.url)
     const q = {
       doc: u.searchParams.get('doc') ?? '',
@@ -23,6 +23,6 @@ export async function POST(req: Request, { params }: Ctx) {
       size: Number(u.searchParams.get('size')),
     }
     const body = Buffer.from(await req.arrayBuffer())
-    return ok(await receiveUpload(e, q, body))
+    return ok(await receiveUpload(e, p, q, body))
   })
 }

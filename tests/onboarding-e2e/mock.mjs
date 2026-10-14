@@ -4,7 +4,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 
 const PORT = 8899
-const db = { onboarding_engagements: [], onboarding_settings: [{ id: 1, entity_type: '', office_address: '', signer_name: 'Chaun', signer_title: '' }], profiles: [{ id: 'admin-1', email: 'admin@example.com', role: 'admin' }] }
+const db = { onboarding_engagements: [], onboarding_people: [], onboarding_settings: [{ id: 1, entity_type: '', office_address: '', signer_name: 'Chaun', signer_title: '' }], profiles: [{ id: 'admin-1', email: 'admin@example.com', role: 'admin' }] }
 const files = new Map() // path -> Buffer
 const dirs = new Set()
 const uploads = new Map() // id -> Map(name -> Buffer)
@@ -50,6 +50,10 @@ function defaults(table, row) {
       spouse_name: null, spouse_email: null, sign_details: null, libresign_uuid: null, libresign_status: null, signers_status: null, nextcloud_folder: null, questionnaire_part: null,
       sent_for_signature_at: null, signed_at: null, submitted_at: null, created_by: null, token_enc: null, ...row }
   }
+  if (table === 'onboarding_people') {
+    return { id: randomUUID(), token_hash: null, token_enc: null, nextcloud_folder: null, questionnaire_part: null, docs_total: 0, docs_done: 0, submitted_at: null,
+      last_activity_at: now, created_at: now, updated_at: now, ...row }
+  }
   return { ...row }
 }
 
@@ -79,6 +83,7 @@ async function rest(req, res, table, url, body) {
         if (existing) { Object.assign(existing, row, { updated_at: new Date().toISOString() }); out.push(existing); continue }
       }
       if (table === 'onboarding_engagements' && t.some((r) => r.token_hash === row.token_hash)) return send(res, 409, { message: 'duplicate token_hash' })
+      if (table === 'onboarding_people' && (t.some((r) => r.engagement_id === row.engagement_id && r.role === row.role) || (row.token_hash && t.some((r) => r.token_hash === row.token_hash)))) return send(res, 409, { code: '23505', message: 'duplicate key value violates unique constraint' })
       const r = defaults(table, row)
       t.push(r)
       out.push(r)

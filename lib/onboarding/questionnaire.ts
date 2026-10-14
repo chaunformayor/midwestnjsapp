@@ -64,9 +64,9 @@ export function propName(a: Answers, pid: string, i: number) {
   return addr || `Property ${i + 1}`
 }
 
-function person(p: 'p1' | 'p2'): Field[] {
+function person(p: 'p1'): Field[] {
   return [
-    txt(`${p}.name`, 'Full legal name', { req: p === 'p1' }),
+    txt(`${p}.name`, 'Full legal name', { req: true }),
     txt(`${p}.dob`, 'Date of birth', { type: 'date' }),
     pick(`${p}.citizen`, 'U.S. citizen?', ['Yes', 'No'], { hint: 'Affects certain estate-tax rules' }),
     txt(`${p}.phone`, 'Phone', { type: 'tel' }),
@@ -77,12 +77,11 @@ function person(p: 'p1' | 'p2'): Field[] {
   ]
 }
 
-function partAbout(a: Answers): Section[] {
-  const sp = S(a, 'hh.spouse') === 'Yes'
+function partAbout(a: Answers, partner?: string): Section[] {
   const m = S(a, 'hh.marital')
   return [
-    { type: 'group', fields: [pick('hh.spouse', 'Is a spouse or co-owner taking part in this engagement?', ['Yes', 'No'], { full: true })] },
-    { type: 'columns', cols: [{ title: 'You', fields: person('p1') }, ...when(sp, { title: 'Spouse or co-owner', fields: person('p2') })] },
+    ...when(!!partner, { type: 'lede', text: `Answer for yourself. ${partner} has a separate link and answers their own questionnaire and uploads their own documents.` } as Section),
+    { type: 'group', title: 'You', fields: person('p1') },
     {
       type: 'group', title: 'Household', fields: [
         txt('hh.address', 'Home address', { full: true }),
@@ -379,9 +378,10 @@ function partFinal(): Section[] {
   ]
 }
 
-export function buildParts(modules: ModuleId[], a: Answers): Part[] {
+/** `partner` is the other person on the engagement, if there is one. It only changes the wording of the first part. */
+export function buildParts(modules: ModuleId[], a: Answers, partner?: string): Part[] {
   const P: Part[] = []
-  P.push({ id: 'about', title: 'About you', short: 'About you', sections: partAbout(a) })
+  P.push({ id: 'about', title: 'About you', short: 'About you', sections: partAbout(a, partner) })
   P.push({ id: 'goals', title: 'Goals and priorities', short: 'Goals', sections: partGoals() })
   if (modules.includes('investing')) P.push({ id: 'investing', title: 'Investment goals', short: 'Investment goals', sections: partInvesting() })
   P.push({ id: 'props', title: 'Your properties', short: 'Properties', sections: partProps(a) })
@@ -469,6 +469,17 @@ export function docsDone(items: DocItem[], d: DocState): number {
 // ------------------------------------------------------------ summary (for the PDF)
 
 export type SummarySection = { title: string; rows: [string, string][] }
+
+export type ChecklistRow = { group: string; title: string; status: 'uploaded' | 'na' | 'missing'; files: string[] }
+
+/** The document checklist as shown in the PDF: what was uploaded, marked not applicable, or is still missing. */
+export function checklistRows(items: DocItem[], d: DocState): ChecklistRow[] {
+  return items.map((x) => {
+    const s = d[x.id]
+    const files = s?.files ?? []
+    return { group: x.group, title: x.title, files, status: files.length ? 'uploaded' : s?.na ? 'na' : 'missing' }
+  })
+}
 
 function display(f: Field, a: Answers): string {
   const v = a.v[f.key]

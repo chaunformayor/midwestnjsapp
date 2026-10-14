@@ -244,6 +244,12 @@ export async function libresignDownload(file: LibreSignFile): Promise<Buffer | n
   return null
 }
 
+/** LibreSign's public page where anyone can check a signed document by its file uuid. */
+export function validationPageUrl(fileUuid: string) {
+  const c = cfg()
+  return `${c.url}/index.php/apps/libresign/p/validation/${encodeURIComponent(fileUuid)}`
+}
+
 export function signingPageUrl(signRequestUuid: string) {
   const c = cfg()
   return `${c.url}/index.php/apps/libresign/p/sign/${encodeURIComponent(signRequestUuid)}`

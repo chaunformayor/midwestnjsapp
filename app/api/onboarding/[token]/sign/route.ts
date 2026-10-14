@@ -9,9 +9,9 @@ type Ctx = { params: Promise<{ token: string }> }
 /** Builds the agreement PDF and sends it to LibreSign for signature. */
 export async function POST(req: Request, { params }: Ctx) {
   const { token } = await params
-  return withClient(token, async (e) => {
+  return withClient(token, async (e, p) => {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
-    const updated = await startSigning(e, body)
-    return ok(await clientView(updated))
+    const updated = await startSigning(e, p, body)
+    return ok(await clientView(updated, p))
   })
 }

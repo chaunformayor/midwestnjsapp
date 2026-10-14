@@ -219,34 +219,56 @@ export async function sendOnboardingInvite(data: { to: string; firstName: string
   })
 }
 
-export async function sendOnboardingSigned(data: { clientEmail: string; firstName: string; client: string; link: string | null; adminUrl: string; folderUrl?: string }) {
+export async function sendOnboardingSigned(data: {
+  client: string
+  adminUrl: string
+  folderUrl?: string
+  signers: { name: string; signedAt: string }[]
+  validationUrl?: string | null
+  people: { email: string; firstName: string; link: string | null }[]
+}) {
+  const signerRows = data.signers.map((s) => `<tr><td style="padding:6px 8px;border:1px solid #eee;">${esc(s.name)}</td><td style="padding:6px 8px;border:1px solid #eee;">${esc(s.signedAt)}</td></tr>`).join('')
+  const signerTable = signerRows ? `<table style="border-collapse:collapse;width:100%;font-size:14px;margin:12px 0;"><tr><th align="left" style="padding:6px 8px;border:1px solid #eee;">Signed by</th><th align="left" style="padding:6px 8px;border:1px solid #eee;">When</th></tr>${signerRows}</table>` : ''
+  const verify = data.validationUrl ? `<p><a href="${esc(data.validationUrl)}" style="color:#A88830;">Verify the signatures online</a></p>` : ''
   await sendEmail({
     from: FROM, to: ADMIN_EMAIL,
     subject: `Agreements signed — ${data.client}`,
     html: baseLayout(`
-      <p><strong>${esc(data.client)}</strong> signed the Engagement Agreement and NDA, and so did MIS. The signed PDF is in the client's Nextcloud folder.</p>
+      <p><strong>${esc(data.client)}</strong> signed the Engagement Agreement and NDA, and so did MIS. The signed PDF and a signing certificate are in the engagement's Agreements folder in Nextcloud.</p>
+      ${signerTable}
+      ${verify}
       ${button(data.adminUrl, 'Open in admin')}
       ${data.folderUrl ? `<p><a href="${esc(data.folderUrl)}" style="color:#A88830;">Open the Nextcloud folder</a></p>` : ''}`),
   })
-  await sendEmail({
-    from: FROM, to: data.clientEmail, replyTo: ADMIN_EMAIL,
-    subject: 'Your agreements are signed — next, the questionnaire',
-    html: baseLayout(`
-      <p>Hi ${esc(data.firstName) || 'there'},</p>
-      <p>Your Engagement Agreement and NDA are signed. You can download the signed PDF anytime from your onboarding page.</p>
-      <p>Next, answer the questionnaire and upload your documents. Your progress saves as you go.</p>
-      ${data.link ? button(data.link, 'Continue onboarding') : ''}
-      ${SIGNOFF}`),
-  })
+  for (const p of data.people) {
+    if (!p.email) continue
+    await sendEmail({
+      from: FROM, to: p.email, replyTo: ADMIN_EMAIL,
+      subject: 'Your agreements are signed — next, your questionnaire',
+      html: baseLayout(`
+        <p>Hi ${esc(p.firstName) || 'there'},</p>
+        <p>Your Engagement Agreement and NDA are fully signed. This is your confirmation:</p>
+        ${signerTable}
+        <p>You can download the signed PDF and the signing certificate anytime from your onboarding page.</p>
+        <p>Next, answer your own questionnaire and upload your own documents. Your progress saves as you go.</p>
+        ${p.link ? button(p.link, 'Continue onboarding') : ''}
+        <p style="color:#6B7280;font-size:13px;">This link is just for you. Please don't forward it.</p>
+        ${SIGNOFF}`),
+    })
+  }
 }
 
-export async function sendOnboardingSubmitted(data: { clientEmail: string; firstName: string; client: string; link: string | null; adminUrl: string; docsDone: number; docsTotal: number; folderUrl?: string }) {
+export async function sendOnboardingSubmitted(data: { clientEmail: string; firstName: string; client: string; link: string | null; adminUrl: string; docsDone: number; docsTotal: number; folderUrl?: string; everyoneDone?: boolean; waitingOn?: string[] }) {
+  const status = data.everyoneDone
+    ? '<p>Everyone on this engagement has now submitted.</p>'
+    : data.waitingOn?.length ? `<p>Still waiting on: ${esc(data.waitingOn.join(', '))}.</p>` : ''
   await sendEmail({
     from: FROM, to: ADMIN_EMAIL,
     subject: `Questionnaire submitted — ${data.client}`,
     html: baseLayout(`
       <p><strong>${esc(data.client)}</strong> submitted the intake questionnaire. Documents so far: ${data.docsDone} of ${data.docsTotal}.</p>
-      <p>The answers are saved as a PDF in the client's Nextcloud folder.</p>
+      ${status}
+      <p>The answers and document checklist are saved as one PDF in that person's Nextcloud folder.</p>
       ${button(data.adminUrl, 'Open in admin')}
       ${data.folderUrl ? `<p><a href="${esc(data.folderUrl)}" style="color:#A88830;">Open the Nextcloud folder</a></p>` : ''}`),
   })

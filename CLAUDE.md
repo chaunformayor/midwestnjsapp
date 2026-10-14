@@ -23,17 +23,20 @@ Commands: `npm run dev`, `npm run build`, `npx tsc --noEmit`, `tests/onboarding-
 
 ## Client onboarding
 
-Flow: admin creates a client with that client's fees → the site emails a private link → client reviews the Engagement Agreement and NDA, enters their address, and clicks **Send me the signing link** → LibreSign emails each signer → client and spouse sign (order 1), then MIS countersigns from its Nextcloud account (order 2) → LibreSign calls back → the site saves the signed PDF and emails both sides → client fills in the questionnaire → uploads documents.
+Flow: admin creates a client with that client's fees → the site emails the main client a private link → client reviews the Engagement Agreement and NDA, enters their address, and clicks **Send me the signing link** → LibreSign emails each signer → client and spouse sign (order 1), then MIS countersigns from its Nextcloud account (order 2) → LibreSign calls back → the site saves the signed PDF and a **Signing Certificate**, and emails admin, client and spouse (each with their own link) → **each person** fills in their own questionnaire and uploads their own documents.
+
+**People:** the agreements are signed once per household, but every person has their own row in `onboarding_people`, their own link, answers, documents and folder. The main client's link is the engagement's own token (existing links keep working); the spouse gets a separate token. Rows for older engagements are created the first time they are opened. The engagement becomes `submitted` only when every person has submitted; a person's page shows `submitted` as soon as they have.
 
 ### Files
 
 | Path | What it is |
 |---|---|
 | `supabase/migrations/004_onboarding.sql` | `onboarding_engagements` and `onboarding_settings` tables, admin-only access rules (already run in Supabase) |
+| `supabase/migrations/005_onboarding_people.sql` | `onboarding_people`: one row per person with their own link, folder and progress. **Run in the Supabase SQL editor before deploying.** |
 | `lib/onboarding/config.ts` | Engagement types, questionnaire sections, fee fields, payment options, status labels, MIS contact info |
 | `lib/onboarding/agreements.ts` | Full agreement and NDA text. One source feeds both the web view and the PDF. |
 | `lib/onboarding/questionnaire.ts` | Questionnaire definition, per-property follow-up sections, validation, document checklist |
-| `lib/onboarding/pdf.ts` | Agreement and questionnaire PDFs |
+| `lib/onboarding/pdf.ts` | Agreement PDF, the per-person Questionnaire and Document Checklist PDF, and the Signing Certificate |
 | `lib/onboarding/server.ts` | Link tokens (hash plus encrypted copy), callback signatures, site URL and preview bypass, database access, Nextcloud paths |
 | `lib/onboarding/service.ts` | The workflow: create, invite, start signing, refresh signing, resend signing email, answers, submit, uploads |
 | `lib/nextcloud.ts` | WebDAV (folders, files, chunked upload) and the LibreSign API |
@@ -43,7 +46,21 @@ Flow: admin creates a client with that client's fees → the site emails a priva
 | `app/api/onboarding/libresign-callback` | LibreSign's "signed" notice (checked by HMAC, then re-checked with LibreSign) |
 | `app/api/admin/onboarding/*` | Admin APIs: create, settings, and per-client actions (resend, new-link, refresh, remind, reset-signing, cancel, link) |
 
-Client files are stored in Nextcloud under the website's account: `MIS Clients/<Name> (<id6>)/Agreements|Questionnaire|Documents`.
+Client files are stored in Nextcloud under the website's account:
+
+```
+MIS Clients/<Engagement type> - <Household> (<id6>)/       e.g. Estate Planning - John and Jane Smith (a1b2c3)
+  Agreements/                  unsigned PDF, signed PDF, Signing Certificate.pdf (shared)
+  <Person name>/               one folder per person
+    Questionnaire/             answers.json, Questionnaire and Document Checklist.pdf
+    Documents/<group>/...      their uploads, plus checklist.json
+```
+
+The PDF is built on submit and rebuilt after every later upload or not-applicable mark. Older engagements keep their old single folder for the main client.
+
+### Signing confirmation
+
+LibreSign puts digital signatures in the PDF but not necessarily a visible stamp. The site therefore also saves `Agreements/Signing Certificate.pdf` (signers, times, LibreSign file id, SHA-256 of the signed PDF, verification link), shows the signers and times on the client's "Agreements signed" panel and the admin page, and includes them in the signed emails. The verification link is LibreSign's public page `/apps/libresign/p/validation/<uuid>`; confirm it opens on the live Nextcloud. A visible footer or QR on every page is a Nextcloud-side LibreSign setting, not something the site controls.
 
 ### LibreSign facts learned the hard way
 
@@ -79,8 +96,10 @@ For the live preview, read Vercel runtime logs within an hour of the problem.
 ## Status (October 14, 2026)
 
 - Full flow tested live on the preview up to the signing step. Invite email, LibreSign emails and partial signing all work.
+- Per-person questionnaires and documents, the new folder layout, the combined PDF and the signing certificate are built and pass `E2E_RUNNER=node tests/onboarding-e2e/run.sh`; not yet tried live.
 - Not yet tested live: MIS countersign → "Agreements signed" → questionnaire → uploads → files in Nextcloud.
 - Before go-live:
+  0. Run `supabase/migrations/005_onboarding_people.sql` in Supabase.
   1. Add the env vars to Production and set `ONBOARDING_SECRET`.
   2. Decide on email: keep Resend, or get SES production access.
   3. Delete or fix the `SMTP_FROM` value in Vercel. It currently has no address in it, so the site falls back to `info@midwestinvestorservices.com`.

@@ -1,21 +1,22 @@
 // Server-only business logic for client onboarding. API routes stay thin and
 // call into here.
 
+import { createHash } from 'node:crypto'
 import { format } from 'date-fns'
 import {
   ENGAGEMENT_TYPES, PAY_OPTIONS, firstName, householdName, missingFees, missingSettings,
   type EngagementType, type Fees, type MisSettings, type ModuleId,
 } from './config'
 import { engagementAgreement, ndaAgreement, hasBlanks, type AgreementContext } from './agreements'
-import { agreementsPdf, questionnairePdf } from './pdf'
-import { buildParts, docItems, docsDone, summarize, validatePart, type Answers, type DocState, EMPTY_ANSWERS } from './questionnaire'
+import { agreementsPdf, certificatePdf, questionnairePdf } from './pdf'
+import { buildParts, checklistRows, docItems, docsDone, summarize, validatePart, type Answers, type DocState, EMPTY_ANSWERS } from './questionnaire'
 import {
   type LibreSignSigner, NextcloudError, ensureFolder, putFile, getJson, putJson, folderWebUrl, libresignRequest, libresignValidate, libresignDownload, libresignNotifySigner,
-  signingPageUrl, LS_STATUS, chunkStart, chunkPut, chunkFinish, chunkAbort, type LibreSignFile, type SignerInput,
+  signingPageUrl, validationPageUrl, LS_STATUS, chunkStart, chunkPut, chunkFinish, chunkAbort, type LibreSignFile, type SignerInput,
 } from '@/lib/nextcloud'
 import {
-  type Engagement, type SignDetails, PATHS, clientFolderName, clientLink, callbackUrl, decryptToken, encryptToken,
-  getEngagement, getSettings, hashToken, insertEngagement, newToken, safeFileName, siteUrl, updateEngagement,
+  type Engagement, type Person, type SignDetails, PATHS, engagementFolderName, personFolderName, clientLink, callbackUrl, decryptToken, encryptToken,
+  ensurePeople, getEngagement, getSettings, hashToken, insertEngagement, listPeople, newToken, personLink, safeFileName, siteUrl, updateEngagement, updatePerson,
 } from './server'
 import { sendOnboardingInvite, sendOnboardingSigned, sendOnboardingSubmitted } from '@/lib/ses'
 
@@ -79,15 +80,16 @@ export async function createEngagement(input: CreateInput, adminId: string) {
     created_by: adminId,
   })
 
+  await ensurePeople(e)
   const link = clientLink(token)
   let emailed = false
   if (input.send_email) emailed = await emailInvite(e, link)
   return { engagement: e, link, emailed }
 }
 
-async function emailInvite(e: Engagement, link: string) {
+async function emailInvite(e: Engagement, link: string, p?: Pick<Person, 'name' | 'email'>) {
   try {
-    await sendOnboardingInvite({ to: e.client_email, firstName: firstName(e.client_name), link, engagement: ENGAGEMENT_TYPES[e.engagement_type].label })
+    await sendOnboardingInvite({ to: p?.email || e.client_email, firstName: firstName(p?.name || e.client_name), link, engagement: ENGAGEMENT_TYPES[e.engagement_type].label })
     return true
   } catch (err) {
     console.error('onboarding invite email failed', err)
@@ -100,24 +102,40 @@ export function linkFor(e: Engagement) {
   return token ? clientLink(token) : null
 }
 
-export async function resendInvite(e: Engagement) {
-  const link = linkFor(e)
-  if (!link) throw new UserError('This link can no longer be shown. Make a new link instead.')
-  if (!(await emailInvite(e, link))) throw new UserError('The email could not be sent. Check the email settings and try again.', 502)
+export async function personByRole(e: Engagement, role: 'client' | 'spouse' = 'client'): Promise<Person> {
+  const p = (await ensurePeople(e)).find((x) => x.role === role)
+  if (!p) throw new UserError('That person is not part of this engagement.', 404)
+  return p
 }
 
-export async function replaceLink(e: Engagement, sendEmail: boolean) {
+export async function resendInvite(e: Engagement, p: Person) {
+  const link = personLink(e, p)
+  if (!link) throw new UserError('This link can no longer be shown. Make a new link instead.')
+  if (!(await emailInvite(e, link, p))) throw new UserError('The email could not be sent. Check the email settings and try again.', 502)
+}
+
+export async function replaceLink(e: Engagement, p: Person, sendEmail: boolean) {
   const token = newToken()
-  const updated = await updateEngagement(e.id, { token_hash: hashToken(token), token_enc: encryptToken(token) })
-  if (!updated) throw new UserError('Client not found.', 404)
+  if (p.role === 'client') {
+    const updated = await updateEngagement(e.id, { token_hash: hashToken(token), token_enc: encryptToken(token) })
+    if (!updated) throw new UserError('Client not found.', 404)
+  } else {
+    const updated = await updatePerson(p.id, { token_hash: hashToken(token), token_enc: encryptToken(token) })
+    if (!updated) throw new UserError('Client not found.', 404)
+  }
   const link = clientLink(token)
-  const emailed = sendEmail ? await emailInvite(updated, link) : false
+  const emailed = sendEmail ? await emailInvite(e, link, p) : false
   return { link, emailed }
 }
 
 // ---------------------------------------------------------------- client: view
 
 export type ClientView = {
+  /** The person looking at this page */
+  me: { role: 'client' | 'spouse'; name: string; email: string }
+  /** The other person on the engagement, if any */
+  partner: { name: string; submitted: boolean } | null
+  signers_done: { name: string; signed_at: string | null }[]
   client_name: string
   client_email: string
   spouse_name: string | null
@@ -137,29 +155,48 @@ export type ClientView = {
   part: string | null
   docs: DocState
   storageError: boolean
+  /** Link to LibreSign's public page for checking the signatures, once signed */
+  validationUrl: string | null
 }
 
-export async function clientView(e: Engagement): Promise<ClientView> {
+export async function clientView(e: Engagement, p: Person): Promise<ClientView> {
   if (e.status === 'signing') e = (await refreshSigning(e)) ?? e
+  const people = await listPeople(e.id)
+  p = people.find((x) => x.id === p.id) ?? p
+  const partner = people.find((x) => x.id !== p.id) ?? null
   const mis = e.sign_details?.mis ?? (await getSettings())
   let answers: Answers = EMPTY_ANSWERS
-  let part: string | null = e.questionnaire_part
+  let part: string | null = p.questionnaire_part
   let docs: DocState = {}
   let storageError = false
-  if (e.nextcloud_folder) {
+  if (p.nextcloud_folder) {
     try {
-      const saved = await getJson<{ answers: Answers; part?: string }>(PATHS.answers(e.nextcloud_folder))
+      const saved = await getJson<{ answers: Answers; part?: string }>(PATHS.answers(p.nextcloud_folder))
       if (saved?.answers) {
         answers = { v: saved.answers.v ?? {}, props: saved.answers.props ?? [] }
         part = saved.part ?? part
       }
-      docs = (await getJson<DocState>(PATHS.checklist(e.nextcloud_folder))) ?? {}
+      docs = (await getJson<DocState>(PATHS.checklist(p.nextcloud_folder))) ?? {}
     } catch (err) {
       console.error('onboarding: could not read from Nextcloud', err)
       storageError = true
     }
   }
+  // Start each person's questionnaire with what we already know about them
+  if (!part && (e.status === 'signed' || e.status === 'submitted')) {
+    const v = { ...answers.v }
+    if (v['p1.name'] == null) v['p1.name'] = p.name
+    if (v['p1.email'] == null) v['p1.email'] = p.email
+    if (v['hh.address'] == null && e.sign_details?.address) v['hh.address'] = e.sign_details.address
+    answers = { ...answers, v }
+  }
+  // Each person sees their own progress: they are "submitted" once they have submitted
+  const status: Engagement['status'] = e.status === 'signed' || e.status === 'submitted' ? (p.submitted_at ? 'submitted' : 'signed') : e.status
   return {
+    me: { role: p.role, name: p.name, email: p.email },
+    partner: partner ? { name: partner.name, submitted: Boolean(partner.submitted_at) } : null,
+    signers_done: (e.signers_status ?? []).map((s) => ({ name: s.name, signed_at: s.signed_at })),
+    validationUrl: e.status === 'signed' || e.status === 'submitted' ? certificateValidationUrl(e) : null,
     client_name: e.client_name,
     client_email: e.client_email,
     spouse_name: e.spouse_name,
@@ -169,7 +206,7 @@ export async function clientView(e: Engagement): Promise<ClientView> {
     modules: e.modules,
     fees: e.fees,
     pay_methods: e.pay_methods,
-    status: e.status,
+    status,
     sign_details: e.sign_details,
     signers: (e.signers_status ?? []).filter((s) => s.email).map((s) => ({
       name: s.name,
@@ -178,12 +215,21 @@ export async function clientView(e: Engagement): Promise<ClientView> {
       signUrl: !s.signed_at && s.sign_request_uuid && e.status === 'signing' ? safeSigningUrl(s.sign_request_uuid) : null,
     })),
     signed_at: e.signed_at,
-    submitted_at: e.submitted_at,
+    submitted_at: p.submitted_at,
     mis,
     answers,
     part,
     docs,
     storageError,
+  }
+}
+
+function certificateValidationUrl(e: Pick<Engagement, 'libresign_uuid'>) {
+  if (!e.libresign_uuid) return null
+  try {
+    return validationPageUrl(e.libresign_uuid)
+  } catch {
+    return null
   }
 }
 
@@ -195,28 +241,52 @@ function safeSigningUrl(uuid: string) {
   }
 }
 
-async function ensureClientFolder(e: Engagement, force = false): Promise<string> {
+/** The engagement's top-level folder, with the shared Agreements folder inside. */
+async function ensureRootFolder(e: Engagement, force = false): Promise<string> {
   if (e.nextcloud_folder && !force) return e.nextcloud_folder
-  const folder = e.nextcloud_folder || clientFolderName(e)
-  await ensureFolder(PATHS.agreements(folder))
+  const root = e.nextcloud_folder || engagementFolderName(e)
+  await ensureFolder(PATHS.agreements(root))
+  if (!e.nextcloud_folder) {
+    await updateEngagement(e.id, { nextcloud_folder: root })
+    e.nextcloud_folder = root
+  }
+  return root
+}
+
+/** One person's own folder under the engagement folder, with Questionnaire and Documents inside. */
+async function ensurePersonFolder(e: Engagement, p: Person, force = false): Promise<string> {
+  if (p.nextcloud_folder && !force) return p.nextcloud_folder
+  const root = await ensureRootFolder(e, force)
+  const folder = p.nextcloud_folder || personFolderName(root, p, await listPeople(e.id))
   await ensureFolder(PATHS.questionnaire(folder))
   await ensureFolder(PATHS.documents(folder))
-  if (!e.nextcloud_folder) {
-    await updateEngagement(e.id, { nextcloud_folder: folder })
-    e.nextcloud_folder = folder
+  if (!p.nextcloud_folder) {
+    await updatePerson(p.id, { nextcloud_folder: folder })
+    p.nextcloud_folder = folder
   }
   return folder
 }
 
-/** Runs a write; if Nextcloud says a folder is missing (someone deleted it), recreates the folders and retries once. */
-async function withFolders<T>(e: Engagement, op: (folder: string) => Promise<T>): Promise<T> {
-  const folder = await ensureClientFolder(e)
+const folderMissing = (err: unknown) => err instanceof NextcloudError && (err.status === 409 || err.status === 404)
+
+/** Runs a write in the engagement folder; if Nextcloud says a folder is missing (someone deleted it), recreates it and retries once. */
+async function withRoot<T>(e: Engagement, op: (root: string) => Promise<T>): Promise<T> {
+  const root = await ensureRootFolder(e)
+  try {
+    return await op(root)
+  } catch (err) {
+    if (folderMissing(err)) return op(await ensureRootFolder(e, true))
+    throw err
+  }
+}
+
+/** Same as withRoot, for one person's own folder. */
+async function withFolders<T>(e: Engagement, p: Person, op: (folder: string) => Promise<T>): Promise<T> {
+  const folder = await ensurePersonFolder(e, p)
   try {
     return await op(folder)
   } catch (err) {
-    if (err instanceof NextcloudError && (err.status === 409 || err.status === 404)) {
-      return op(await ensureClientFolder(e, true))
-    }
+    if (folderMissing(err)) return op(await ensurePersonFolder(e, p, true))
     throw err
   }
 }
@@ -236,7 +306,8 @@ export function agreementContext(e: Pick<Engagement, 'focus' | 'fees' | 'pay_met
   }
 }
 
-export async function startSigning(e: Engagement, body: Record<string, unknown>) {
+export async function startSigning(e: Engagement, p: Person, body: Record<string, unknown>) {
+  if (p.role !== 'client') throw new UserError(`${firstName(e.client_name) || 'The main client'} sets up the signing for both of you. You'll get your own link once the agreements are signed.`, 403)
   if (e.status === 'canceled') throw new UserError('This onboarding was canceled. Please contact us.', 409)
   if (e.status !== 'invited') throw new UserError('The agreements were already sent for signature.', 409)
 
@@ -270,7 +341,7 @@ export async function startSigning(e: Engagement, body: Record<string, unknown>)
   }
   const pdf = await agreementsPdf(eng, nda)
 
-  await withFolders(e, (folder) => putFile(PATHS.unsigned(folder), pdf, 'application/pdf'))
+  await withRoot(e, (root) => putFile(PATHS.unsigned(root), pdf, 'application/pdf'))
 
   const signers: SignerInput[] = [{ kind: 'email', name: d.name1, email: d.email1, order: 1, note: 'Please review and sign the Engagement Agreement and NDA.' }]
   if (hasSpouse) signers.push({ kind: 'email', name: d.name2, email: d.email2, order: 1, note: 'Please review and sign the Engagement Agreement and NDA.' })
@@ -298,6 +369,12 @@ export async function startSigning(e: Engagement, body: Record<string, unknown>)
     signers_status: signersFrom(file, details),
     sent_for_signature_at: new Date().toISOString(),
   }, ['invited'])
+  // The names and emails entered at signing are the ones LibreSign uses; keep each person's record the same
+  await updatePerson(p.id, { name: d.name1, email: d.email1 })
+  if (hasSpouse) {
+    const sp = (await listPeople(e.id)).find((x) => x.role === 'spouse')
+    if (sp) await updatePerson(sp.id, { name: d.name2, email: d.email2 })
+  }
   return updated ?? e
 }
 
@@ -420,27 +497,59 @@ export async function refreshSigning(e: Engagement, callbackPdf?: Buffer): Promi
     status: 'signed', libresign_status: file.status, signers_status: merged, signed_at: new Date().toISOString(),
   }, ['signing'])
   if (!done) return (await getEngagement(e.id)) ?? e
-  const folder = await ensureClientFolder(done, true)
+  const root = await ensureRootFolder(done, true)
+  let signedPdf: Buffer | null = null
   try {
-    const pdf = (await libresignDownload(file)) ?? callbackPdf ?? null
-    if (pdf) await putFile(PATHS.signed(folder), pdf, 'application/pdf')
+    signedPdf = (await libresignDownload(file)) ?? callbackPdf ?? null
+    if (signedPdf) await putFile(PATHS.signed(root), signedPdf, 'application/pdf')
     else console.error('onboarding: signed PDF could not be downloaded for', e.id)
   } catch (err) {
     console.error('onboarding: saving signed PDF failed', err)
   }
   try {
+    await saveCertificate(done, root, merged, signedPdf)
+  } catch (err) {
+    console.error('onboarding: saving signing certificate failed', err)
+  }
+  try {
+    const people = await ensurePeople(done)
     await sendOnboardingSigned({
-      clientEmail: done.client_email,
-      firstName: firstName(done.client_name),
       client: householdName(done.client_name, done.spouse_name),
-      link: linkFor(done),
       adminUrl: `${siteUrl()}/admin/onboarding/${done.id}`,
-      folderUrl: folderWebUrl(folder),
+      folderUrl: folderWebUrl(root),
+      signers: merged.map((s) => ({ name: s.name, signedAt: whenText(s.signed_at) })),
+      validationUrl: certificateValidationUrl(done),
+      people: people.map((x) => ({ email: x.email, firstName: firstName(x.name), link: personLink(done, x) })),
     })
   } catch (err) {
     console.error('onboarding: signed email failed', err)
   }
   return done
+}
+
+const whenText = (iso: string | null | undefined) => {
+  const t = iso && iso !== SIGNED_UNKNOWN_TIME ? new Date(iso) : null
+  // Shown in UTC so the same instant reads the same on any server
+  return t && !Number.isNaN(t.getTime()) ? format(new Date(t.getTime() + t.getTimezoneOffset() * 60_000), "MMMM d, yyyy 'at' h:mm a") + ' UTC' : 'Signed'
+}
+
+/** The signing certificate: who signed and when, plus a fingerprint of the signed PDF. Saved next to it. */
+export async function saveCertificate(e: Engagement, root: string, signers: NonNullable<Engagement['signers_status']>, signedPdf: Buffer | null) {
+  const pdf = await certificatePdf({
+    household: householdName(e.client_name, e.spouse_name),
+    document: 'Engagement Agreement and NDA',
+    engagement: ENGAGEMENT_TYPES[e.engagement_type].label,
+    signers: signers.map((s) => ({
+      name: s.name,
+      role: s.email ? 'Client' : 'Midwest Investor Services',
+      signedAt: whenText(s.signed_at),
+    })),
+    completedAt: whenText(e.signed_at),
+    libresignId: e.libresign_uuid ?? '',
+    validationUrl: certificateValidationUrl(e),
+    sha256: signedPdf ? createHash('sha256').update(signedPdf).digest('hex') : null,
+  })
+  await putFile(PATHS.certificate(root), pdf, 'application/pdf')
 }
 
 // ---------------------------------------------------------------- client: questionnaire
@@ -458,57 +567,96 @@ function cleanAnswers(raw: unknown): Answers {
   return { v, props: props as string[] }
 }
 
-export async function saveAnswers(e: Engagement, body: Record<string, unknown>) {
+/** Questionnaire answers can be saved once the agreements are signed, until this person submits. */
+function assertCanAnswer(e: Engagement, p: Person) {
   if (e.status === 'invited' || e.status === 'signing') throw new UserError('Please sign the agreements first.', 409)
-  if (e.status === 'submitted') throw new UserError('Your questionnaire was already submitted. Call us if something needs to change.', 409)
   if (e.status === 'canceled') throw new UserError('This onboarding was canceled.', 409)
-  const answers = cleanAnswers(body.answers)
-  const part = str(body.part, 80) || null
-  const folder = await withFolders(e, async (f) => { await putJson(PATHS.answers(f), { answers, part, savedAt: new Date().toISOString() }); return f })
-  const items = docItems(e.modules, answers)
-  const docs = (await getJson<DocState>(PATHS.checklist(folder))) ?? {}
-  await updateEngagement(e.id, { questionnaire_part: part, docs_total: items.length, docs_done: docsDone(items, docs) })
+  if (p.submitted_at) throw new UserError('Your questionnaire was already submitted. Call us if something needs to change.', 409)
 }
 
-export async function submitAnswers(e: Engagement, body: Record<string, unknown>) {
-  if (e.status === 'submitted') throw new UserError('Your questionnaire was already submitted.', 409)
-  if (e.status !== 'signed') throw new UserError('Please sign the agreements first.', 409)
+/** Keeps the engagement's own totals in step with its people, and marks it submitted once everyone has. */
+async function syncEngagement(e: Engagement): Promise<Engagement | null> {
+  const people = await listPeople(e.id)
+  const patch: Partial<Engagement> = {
+    docs_total: people.reduce((n, x) => n + x.docs_total, 0),
+    docs_done: people.reduce((n, x) => n + x.docs_done, 0),
+    questionnaire_part: people.find((x) => x.role === 'client')?.questionnaire_part ?? people.find((x) => x.questionnaire_part)?.questionnaire_part ?? null,
+  }
+  const everyone = people.length > 0 && people.every((x) => x.submitted_at)
+  if (everyone && e.status === 'signed') {
+    return updateEngagement(e.id, { ...patch, status: 'submitted', submitted_at: new Date().toISOString() }, ['signed'])
+  }
+  return updateEngagement(e.id, patch)
+}
+
+export async function saveAnswers(e: Engagement, p: Person, body: Record<string, unknown>) {
+  assertCanAnswer(e, p)
+  const answers = cleanAnswers(body.answers)
+  const part = str(body.part, 80) || null
+  const folder = await withFolders(e, p, async (f) => { await putJson(PATHS.answers(f), { answers, part, savedAt: new Date().toISOString() }); return f })
+  const items = docItems(e.modules, answers)
+  const docs = (await getJson<DocState>(PATHS.checklist(folder))) ?? {}
+  await updatePerson(p.id, { questionnaire_part: part, docs_total: items.length, docs_done: docsDone(items, docs) })
+  await syncEngagement(e)
+}
+
+/** Rebuilds a person's PDF (answers plus document checklist) from what is saved in Nextcloud. */
+export async function writeQuestionnairePdf(e: Engagement, p: Person, submitted: Date): Promise<{ folder: string; items: ReturnType<typeof docItems>; docs: DocState }> {
+  const folder = await ensurePersonFolder(e, p)
+  const saved = await getJson<{ answers: Answers }>(PATHS.answers(folder))
+  const answers = saved?.answers ? { v: saved.answers.v ?? {}, props: saved.answers.props ?? [] } : EMPTY_ANSWERS
+  const items = docItems(e.modules, answers)
+  const docs = (await getJson<DocState>(PATHS.checklist(folder))) ?? {}
+  const pdf = await questionnairePdf(
+    {
+      person: p.name,
+      household: householdName(e.client_name, e.spouse_name),
+      engagement: ENGAGEMENT_TYPES[e.engagement_type].label,
+      submitted: format(submitted, 'MMMM d, yyyy'),
+    },
+    summarize(e.modules, answers),
+    checklistRows(items, docs),
+  )
+  await putFile(PATHS.answersPdf(folder), pdf, 'application/pdf')
+  return { folder, items, docs }
+}
+
+export async function submitAnswers(e: Engagement, p: Person, body: Record<string, unknown>) {
+  if (p.submitted_at) throw new UserError('Your questionnaire was already submitted.', 409)
+  if (e.status !== 'signed' && e.status !== 'submitted') throw new UserError('Please sign the agreements first.', 409)
   const answers = cleanAnswers(body.answers)
   const parts = buildParts(e.modules, answers)
-  const problems = parts.flatMap((p) => validatePart(p.id, answers))
+  const problems = parts.flatMap((x) => validatePart(x.id, answers))
   if (problems.length) throw new UserError(problems.join(' '))
 
   const now = new Date()
-  const folder = await withFolders(e, async (f) => { await putJson(PATHS.answers(f), { answers, part: 'final', savedAt: now.toISOString(), submittedAt: now.toISOString() }); return f })
-  const pdf = await questionnairePdf(
-    { client: householdName(e.client_name, e.spouse_name), engagement: ENGAGEMENT_TYPES[e.engagement_type].label, submitted: format(now, 'MMMM d, yyyy') },
-    summarize(e.modules, answers),
-  )
-  await putFile(PATHS.answersPdf(folder), pdf, 'application/pdf')
-
-  const items = docItems(e.modules, answers)
-  const docs = (await getJson<DocState>(PATHS.checklist(folder))) ?? {}
+  await withFolders(e, p, async (f) => { await putJson(PATHS.answers(f), { answers, part: 'final', savedAt: now.toISOString(), submittedAt: now.toISOString() }) })
+  const { folder, items, docs } = await writeQuestionnairePdf(e, p, now)
   const done = docsDone(items, docs)
-  const updated = await updateEngagement(e.id, {
-    status: 'submitted', submitted_at: now.toISOString(), questionnaire_part: 'final', docs_total: items.length, docs_done: done,
-  }, ['signed'])
+  const updated = await updatePerson(p.id, {
+    submitted_at: now.toISOString(), questionnaire_part: 'final', docs_total: items.length, docs_done: done,
+  })
   if (!updated) throw new UserError('Your questionnaire was already submitted.', 409)
+  const eng = (await syncEngagement(e)) ?? e
 
   try {
+    const people = await listPeople(e.id)
     await sendOnboardingSubmitted({
-      clientEmail: e.client_email,
-      firstName: firstName(e.client_name),
-      client: householdName(e.client_name, e.spouse_name),
-      link: linkFor(e),
+      clientEmail: p.email,
+      firstName: firstName(p.name),
+      client: people.length > 1 ? `${p.name} (${householdName(e.client_name, e.spouse_name)})` : p.name,
+      link: personLink(e, p),
       adminUrl: `${siteUrl()}/admin/onboarding/${e.id}`,
       docsDone: done,
       docsTotal: items.length,
       folderUrl: folderWebUrl(folder),
+      everyoneDone: eng.status === 'submitted',
+      waitingOn: people.filter((x) => !x.submitted_at && x.id !== p.id).map((x) => x.name),
     })
   } catch (err) {
     console.error('onboarding: submitted email failed', err)
   }
-  return updated
+  return eng
 }
 
 // ---------------------------------------------------------------- client: documents
@@ -516,8 +664,8 @@ export async function submitAnswers(e: Engagement, body: Record<string, unknown>
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 export const CHUNK_BYTES = 4 * 1024 * 1024
 
-async function loadDocContext(e: Engagement) {
-  const folder = await ensureClientFolder(e)
+async function loadDocContext(e: Engagement, p: Person) {
+  const folder = await ensurePersonFolder(e, p)
   const saved = await getJson<{ answers: Answers }>(PATHS.answers(folder))
   const answers = saved?.answers ? { v: saved.answers.v ?? {}, props: saved.answers.props ?? [] } : EMPTY_ANSWERS
   const items = docItems(e.modules, answers)
@@ -525,22 +673,31 @@ async function loadDocContext(e: Engagement) {
   return { folder, items, docs }
 }
 
-async function saveDocs(e: Engagement, folder: string, items: ReturnType<typeof docItems>, docs: DocState) {
+async function saveDocs(e: Engagement, p: Person, folder: string, items: ReturnType<typeof docItems>, docs: DocState) {
   await putJson(PATHS.checklist(folder), docs)
-  await updateEngagement(e.id, { docs_total: items.length, docs_done: docsDone(items, docs) })
+  await updatePerson(p.id, { docs_total: items.length, docs_done: docsDone(items, docs) })
+  await syncEngagement(e)
+  // After the questionnaire is in, the PDF's checklist keeps up with each upload
+  if (p.submitted_at) {
+    try {
+      await writeQuestionnairePdf(e, p, new Date(p.submitted_at))
+    } catch (err) {
+      console.error('onboarding: refreshing the checklist PDF failed', err)
+    }
+  }
 }
 
 function assertCanUpload(e: Engagement) {
   if (e.status !== 'signed' && e.status !== 'submitted') throw new UserError('Please sign the agreements first.', 409)
 }
 
-export async function setNotApplicable(e: Engagement, docId: string, na: boolean) {
+export async function setNotApplicable(e: Engagement, p: Person, docId: string, na: boolean) {
   assertCanUpload(e)
-  const { folder, items, docs } = await loadDocContext(e)
+  const { folder, items, docs } = await loadDocContext(e, p)
   if (!items.some((x) => x.id === docId)) throw new UserError('Unknown document.', 404)
   const cur = docs[docId] ?? { files: [], na: false }
   docs[docId] = { files: cur.files, na: na && cur.files.length === 0 }
-  await saveDocs(e, folder, items, docs)
+  await saveDocs(e, p, folder, items, docs)
   return docs
 }
 
@@ -548,7 +705,7 @@ export async function setNotApplicable(e: Engagement, docId: string, na: boolean
  * Receives one piece of a file. Files up to CHUNK_BYTES arrive in one piece;
  * larger ones arrive in order as index 1..total and are assembled by Nextcloud.
  */
-export async function receiveUpload(e: Engagement, q: { doc: string; name: string; upload: string; index: number; total: number; size: number }, body: Buffer) {
+export async function receiveUpload(e: Engagement, p: Person, q: { doc: string; name: string; upload: string; index: number; total: number; size: number }, body: Buffer) {
   assertCanUpload(e)
   if (!/^[a-zA-Z0-9-]{8,64}$/.test(q.upload)) throw new UserError('Invalid upload.')
   if (!(q.total >= 1 && q.total <= Math.ceil(MAX_UPLOAD_BYTES / CHUNK_BYTES) && q.index >= 1 && q.index <= q.total)) throw new UserError('Invalid upload.')
@@ -562,7 +719,7 @@ export async function receiveUpload(e: Engagement, q: { doc: string; name: strin
     return { done: false as const }
   }
 
-  const { folder, items, docs } = await loadDocContext(e)
+  const { folder, items, docs } = await loadDocContext(e, p)
   const item = items.find((x) => x.id === q.doc)
   const group = safeFileName(item?.group ?? 'Other')
   await ensureFolder(`${PATHS.documents(folder)}/${group}`)
@@ -589,6 +746,6 @@ export async function receiveUpload(e: Engagement, q: { doc: string; name: strin
     throw err
   }
   docs[q.doc] = { files: [...cur.files, name], na: false }
-  await saveDocs(e, folder, items, docs)
+  await saveDocs(e, p, folder, items, docs)
   return { done: true as const, name, docs }
 }

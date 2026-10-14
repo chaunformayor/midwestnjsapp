@@ -4,7 +4,7 @@
 import { createHash, createHmac, randomBytes, createCipheriv, createDecipheriv, timingSafeEqual } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/server'
 import type { EngagementStatus, EngagementType, Fees, MisSettings, ModuleId } from './config'
-import { EMPTY_FEES } from './config'
+import { EMPTY_FEES, FOLDER_LABELS, householdName } from './config'
 import { CLIENT_ROOT } from '@/lib/nextcloud'
 
 export type Engagement = {
@@ -36,6 +36,29 @@ export type Engagement = {
   last_activity_at: string | null
   created_by?: string | null
   created_at: string
+  /** Filled in by listEngagements for the admin list */
+  people?: Person[]
+}
+
+/**
+ * One person taking part in an engagement. The main client uses the engagement's
+ * own link; a spouse or co-owner gets a link of their own. Each person has their
+ * own questionnaire answers and document folder.
+ */
+export type Person = {
+  id: string
+  engagement_id: string
+  role: 'client' | 'spouse'
+  name: string
+  email: string
+  token_hash: string | null
+  token_enc: string | null
+  nextcloud_folder: string | null
+  questionnaire_part: string | null
+  docs_total: number
+  docs_done: number
+  submitted_at: string | null
+  last_activity_at: string | null
 }
 
 export type SignDetails = {
@@ -155,7 +178,14 @@ export async function listEngagements(): Promise<Engagement[]> {
   const db = createAdminClient()
   const { data, error } = await db.from(TABLE).select('*').order('created_at', { ascending: false }).limit(200)
   if (error) throw new Error(error.message)
-  return (data ?? []).map(normalize)
+  const list = (data ?? []).map(normalize)
+  if (list.length) {
+    const people = await db.from(PEOPLE).select('*').in('engagement_id', list.map((x) => x.id))
+    if (!people.error) {
+      for (const x of list) x.people = ((people.data ?? []) as Person[]).filter((p) => p.engagement_id === x.id)
+    }
+  }
+  return list
 }
 
 export async function insertEngagement(row: Partial<Engagement>): Promise<Engagement> {
@@ -172,6 +202,76 @@ export async function updateEngagement(id: string, patch: Partial<Engagement>, o
   const { data, error } = await q.select('*')
   if (error) throw new Error(error.message)
   return data?.[0] ? normalize(data[0]) : null
+}
+
+// ---------------------------------------------------------------- people
+
+const PEOPLE = 'onboarding_people'
+
+export async function listPeople(engagementId: string): Promise<Person[]> {
+  const db = createAdminClient()
+  const { data, error } = await db.from(PEOPLE).select('*').eq('engagement_id', engagementId)
+  if (error) throw new Error(error.message)
+  return ((data ?? []) as Person[]).sort((a, b) => (a.role === b.role ? 0 : a.role === 'client' ? -1 : 1))
+}
+
+export async function updatePerson(id: string, patch: Partial<Person>): Promise<Person | null> {
+  const db = createAdminClient()
+  const { data, error } = await db.from(PEOPLE).update({ ...patch, last_activity_at: new Date().toISOString() }).eq('id', id).select('*')
+  if (error) throw new Error(error.message)
+  return (data?.[0] as Person | undefined) ?? null
+}
+
+/**
+ * Makes sure the engagement has a row for the main client and, if there is one,
+ * the spouse or co-owner. Engagements made before people had their own rows get
+ * theirs the first time they are opened; the main client keeps the folder and
+ * progress already on the engagement.
+ */
+export async function ensurePeople(e: Engagement): Promise<Person[]> {
+  const have = await listPeople(e.id)
+  const add: Partial<Person>[] = []
+  if (!have.some((p) => p.role === 'client')) {
+    add.push({
+      engagement_id: e.id, role: 'client', name: e.client_name, email: e.client_email,
+      nextcloud_folder: e.nextcloud_folder, questionnaire_part: e.questionnaire_part,
+      docs_total: e.docs_total, docs_done: e.docs_done, submitted_at: e.submitted_at,
+    })
+  }
+  if (e.spouse_name && !have.some((p) => p.role === 'spouse')) {
+    const token = newToken()
+    add.push({
+      engagement_id: e.id, role: 'spouse', name: e.spouse_name, email: e.spouse_email ?? '',
+      token_hash: hashToken(token), token_enc: encryptToken(token),
+    })
+  }
+  if (!add.length) return have
+  const db = createAdminClient()
+  const { error } = await db.from(PEOPLE).insert(add)
+  // A parallel request may have created the same rows first; read them back either way
+  if (error && !/duplicate|unique|23505/i.test(error.message)) throw new Error(error.message)
+  return listPeople(e.id)
+}
+
+export async function resolveToken(token: string): Promise<{ e: Engagement; person: Person } | null> {
+  if (!token || token.length < 20 || token.length > 100) return null
+  const main = await getEngagementByToken(token)
+  if (main) {
+    const person = (await ensurePeople(main)).find((p) => p.role === 'client')
+    return person ? { e: main, person } : null
+  }
+  const db = createAdminClient()
+  const { data, error } = await db.from(PEOPLE).select('*').eq('token_hash', hashToken(token)).maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data) return null
+  const e = await getEngagement((data as Person).engagement_id)
+  return e ? { e, person: data as Person } : null
+}
+
+/** The private link for one person, or null if it can't be shown any more. */
+export function personLink(e: Engagement, p: Person): string | null {
+  const token = p.role === 'client' ? decryptToken(e.token_enc) : decryptToken(p.token_enc)
+  return token ? clientLink(token) : null
 }
 
 export async function getSettings(): Promise<MisSettings> {
@@ -197,18 +297,36 @@ export { currentAdmin } from '@/lib/auth'
 
 // ---------------------------------------------------------------- Nextcloud folders
 
-export function clientFolderName(e: Pick<Engagement, 'id' | 'client_name'>) {
-  const safe = e.client_name.replace(/[\\/:*?"<>|#%{}~&]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Client'
-  return `${CLIENT_ROOT}/${safe} (${e.id.slice(0, 6)})`
+function safeSegment(text: string, fallback: string, max = 60) {
+  return text.replace(/&/g, 'and').replace(/[\\/:*?"<>|#%{}~]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) || fallback
 }
 
+/** Top-level folder for the engagement, e.g. "MIS Clients/Estate Planning - John and Jane Smith (a1b2c3)". */
+export function engagementFolderName(e: Pick<Engagement, 'id' | 'client_name' | 'spouse_name' | 'engagement_type'>) {
+  const label = FOLDER_LABELS[e.engagement_type] ?? 'Engagement'
+  const who = safeSegment(householdName(e.client_name, e.spouse_name), 'Client', 70)
+  return `${CLIENT_ROOT}/${label} - ${who} (${e.id.slice(0, 6)})`
+}
+
+/** One person's folder inside the engagement folder. Their own questionnaire and documents go inside. */
+export function personFolderName(root: string, p: Pick<Person, 'name' | 'role'>, all: Pick<Person, 'name' | 'role'>[]) {
+  const base = safeSegment(p.name, p.role === 'client' ? 'Client' : 'Spouse')
+  const clash = all.some((o) => o.role !== p.role && safeSegment(o.name, '') === base)
+  return `${root}/${clash ? `${base} (${p.role})` : base}`
+}
+
+/**
+ * Shared agreement files live under the engagement folder (the "root").
+ * Everything personal lives under that person's own folder.
+ */
 export const PATHS = {
-  agreements: (folder: string) => `${folder}/Agreements`,
-  unsigned: (folder: string) => `${folder}/Agreements/Engagement Agreement and NDA - unsigned.pdf`,
-  signed: (folder: string) => `${folder}/Agreements/Engagement Agreement and NDA - signed.pdf`,
+  agreements: (root: string) => `${root}/Agreements`,
+  unsigned: (root: string) => `${root}/Agreements/Engagement Agreement and NDA - unsigned.pdf`,
+  signed: (root: string) => `${root}/Agreements/Engagement Agreement and NDA - signed.pdf`,
+  certificate: (root: string) => `${root}/Agreements/Signing Certificate.pdf`,
   questionnaire: (folder: string) => `${folder}/Questionnaire`,
   answers: (folder: string) => `${folder}/Questionnaire/answers.json`,
-  answersPdf: (folder: string) => `${folder}/Questionnaire/Intake Questionnaire.pdf`,
+  answersPdf: (folder: string) => `${folder}/Questionnaire/Questionnaire and Document Checklist.pdf`,
   documents: (folder: string) => `${folder}/Documents`,
   checklist: (folder: string) => `${folder}/Documents/checklist.json`,
 }

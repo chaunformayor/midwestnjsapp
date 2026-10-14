@@ -2,12 +2,11 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, FolderOpen } from 'lucide-react'
 import { ENGAGEMENT_TYPES, FEE_FIELDS, moneyText, householdName } from '@/lib/onboarding/config'
-import { getEngagement } from '@/lib/onboarding/server'
-import { linkFor } from '@/lib/onboarding/service'
-import { folderWebUrl } from '@/lib/nextcloud'
+import { ensurePeople, getEngagement, personLink } from '@/lib/onboarding/server'
+import { folderWebUrl, validationPageUrl } from '@/lib/nextcloud'
 import { fmtDateTime } from '@/lib/utils'
 import EngagementActions from '@/components/onboarding/EngagementActions'
-import { AgreementChip, Chip, DocsChip, QuestionnaireChip } from '@/components/onboarding/StatusChips'
+import { AgreementChip, Chip, PersonDocsChip, PersonQuestionnaireChip } from '@/components/onboarding/StatusChips'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,8 +17,15 @@ export default async function EngagementPage({ params, searchParams }: { params:
   const sp = await searchParams
   const e = await getEngagement(id)
   if (!e) notFound()
-  const link = linkFor(e)
+  const people = await ensurePeople(e)
   const signers = e.signers_status ?? []
+  const signed = e.status === 'signed' || e.status === 'submitted'
+  let verifyUrl: string | null = null
+  try {
+    if (signed && e.libresign_uuid) verifyUrl = validationPageUrl(e.libresign_uuid)
+  } catch {
+    /* Nextcloud not configured here */
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-10">
@@ -29,6 +35,7 @@ export default async function EngagementPage({ params, searchParams }: { params:
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-gold-dark">{ENGAGEMENT_TYPES[e.engagement_type]?.label}</p>
           <h1 className="font-head text-navy text-3xl mt-1">{householdName(e.client_name, e.spouse_name)}</h1>
           <p className="text-gray-500 text-sm mt-1">{e.client_email}{e.spouse_email ? ` · ${e.spouse_email}` : ''} · created {fmtDateTime(e.created_at)}</p>
+          <p className="text-gray-400 text-xs mt-1">Each person has their own link, questionnaire and document folder.</p>
         </div>
         {e.nextcloud_folder && (
           <a href={folderWebUrl(e.nextcloud_folder)} target="_blank" rel="noopener noreferrer"
@@ -46,10 +53,20 @@ export default async function EngagementPage({ params, searchParams }: { params:
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
         <div className="flex flex-col gap-6">
-          <section className={card}>
-            <h2 className="font-head text-navy text-xl mb-4">Client link</h2>
-            <EngagementActions id={e.id} link={link} status={e.status} email={e.client_email} />
-          </section>
+          {people.map((p) => (
+            <section key={p.id} className={card}>
+              <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+                <h2 className="font-head text-navy text-xl">{p.role === 'client' ? 'Client link' : 'Spouse or co-owner link'} · {p.name}</h2>
+                {p.nextcloud_folder && (
+                  <a href={folderWebUrl(p.nextcloud_folder)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-navy hover:text-gold-dark">
+                    <FolderOpen className="w-4 h-4" /> {p.name}&apos;s folder
+                  </a>
+                )}
+              </div>
+              <EngagementActions id={e.id} link={personLink(e, p)} status={e.status} email={p.email} person={p.role} submitted={Boolean(p.submitted_at)} />
+              {p.role === 'spouse' && !signed && <p className="text-xs text-gray-500 mt-3">The spouse&apos;s link is emailed automatically once the agreements are signed. You can copy it earlier if you want to send it yourself.</p>}
+            </section>
+          ))}
 
           <section className={card}>
             <h2 className="font-head text-navy text-xl mb-4">Progress</h2>
@@ -77,20 +94,35 @@ export default async function EngagementPage({ params, searchParams }: { params:
                   </table>
                 </div>
               )}
-              <div className="py-3 flex flex-wrap justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-navy text-sm">Questionnaire</div>
-                  <div className="text-xs text-gray-500">{e.submitted_at ? `Submitted ${fmtDateTime(e.submitted_at)}` : e.questionnaire_part ? 'Started' : 'Not started'}</div>
+              {signed && (
+                <div className="py-3 text-sm flex flex-col gap-1.5">
+                  <div className="font-semibold text-navy">Signing confirmation</div>
+                  <p className="text-xs text-gray-500">The signed PDF and a Signing Certificate (who signed, when, and a fingerprint of the PDF) are in this engagement&apos;s Agreements folder.</p>
+                  <div className="flex flex-wrap gap-x-5 gap-y-1">
+                    {e.nextcloud_folder && <a href={folderWebUrl(`${e.nextcloud_folder}/Agreements`)} target="_blank" rel="noopener noreferrer" className="font-semibold text-navy hover:text-gold-dark underline underline-offset-2">Open the Agreements folder</a>}
+                    {verifyUrl && <a href={verifyUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-navy hover:text-gold-dark underline underline-offset-2">Verify signatures in LibreSign</a>}
+                  </div>
                 </div>
-                <QuestionnaireChip e={e} />
-              </div>
-              <div className="py-3 flex flex-wrap justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-navy text-sm">Documents</div>
-                  <div className="text-xs text-gray-500">Uploaded or marked not applicable</div>
+              )}
+              {people.map((p) => (
+                <div key={p.id} className="py-3">
+                  <div className="font-semibold text-navy text-sm mb-2">{p.name} <span className="font-normal text-gray-400">· {p.role === 'client' ? 'client' : 'spouse or co-owner'}</span></div>
+                  <div className="flex flex-wrap justify-between gap-3 py-1">
+                    <div>
+                      <div className="text-sm text-gray-700">Questionnaire</div>
+                      <div className="text-xs text-gray-500">{p.submitted_at ? `Submitted ${fmtDateTime(p.submitted_at)}` : p.questionnaire_part ? 'Started' : 'Not started'}</div>
+                    </div>
+                    <PersonQuestionnaireChip p={p} signed={signed} />
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-3 py-1">
+                    <div>
+                      <div className="text-sm text-gray-700">Documents</div>
+                      <div className="text-xs text-gray-500">Uploaded or marked not applicable</div>
+                    </div>
+                    <PersonDocsChip p={p} signed={signed} />
+                  </div>
                 </div>
-                <DocsChip e={e} />
-              </div>
+              ))}
             </div>
           </section>
         </div>

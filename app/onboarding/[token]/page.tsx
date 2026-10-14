@@ -1,4 +1,4 @@
-import { getEngagementByToken } from '@/lib/onboarding/server'
+import { resolveToken } from '@/lib/onboarding/server'
 import { clientView } from '@/lib/onboarding/service'
 import { MIS_CONTACT } from '@/lib/onboarding/config'
 import ClientApp from '@/components/onboarding/ClientApp'
@@ -17,21 +17,21 @@ function Notice({ title, children }: { title: string; children: React.ReactNode 
 
 export default async function OnboardingPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
-  const e = await getEngagementByToken(token)
-  if (!e) {
+  const found = await resolveToken(token)
+  if (!found) {
     return (
       <Notice title="This link isn't working">
         <p>Check that you opened the full link from your email. If it still doesn&apos;t work, the link may have been replaced with a newer one. Contact us and we&apos;ll send you a fresh link.</p>
       </Notice>
     )
   }
-  if (e.status === 'canceled') {
+  if (found.e.status === 'canceled') {
     return (
       <Notice title="This onboarding was closed">
         <p>This link is no longer active. If you think that&apos;s a mistake, contact us and we&apos;ll help.</p>
       </Notice>
     )
   }
-  const view = await clientView(e)
+  const view = await clientView(found.e, found.person)
   return <ClientApp token={token} initial={view} />
 }

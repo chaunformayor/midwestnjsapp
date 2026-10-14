@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { currentAdmin, getEngagement, updateEngagement } from '@/lib/onboarding/server'
-import { describeSigning, linkFor, refreshSigning, replaceLink, resendInvite, resendSigningEmail } from '@/lib/onboarding/service'
+import { describeSigning, personByRole, refreshSigning, replaceLink, resendInvite, resendSigningEmail, writeQuestionnairePdf } from '@/lib/onboarding/service'
+import { personLink } from '@/lib/onboarding/server'
 import { handleError } from '@/lib/onboarding/http'
 import { NextcloudError } from '@/lib/nextcloud'
 
@@ -10,8 +11,9 @@ type Ctx = { params: Promise<{ id: string }> }
 
 /**
  * Admin actions on one client:
- *   resend         email the same link again
+ *   resend         email the same link again (person: "spouse" for the spouse or co-owner, otherwise the main client)
  *   new-link       replace the link (the old one stops working); email it if send=true
+ *   rebuild-pdf    rewrite a person's Questionnaire and Document Checklist PDF from what is saved
  *   refresh        check LibreSign now
  *   remind         have LibreSign email the signing link again to client signers who haven't signed
  *   reset-signing  go back to before signing, e.g. after a typo in a signer's email
@@ -24,14 +26,24 @@ export async function POST(req: Request, { params }: Ctx) {
   try {
     const e = await getEngagement(id)
     if (!e) return NextResponse.json({ error: 'Client not found.' }, { status: 404 })
-    const body = (await req.json().catch(() => ({}))) as { action?: string; send?: boolean }
+    const body = (await req.json().catch(() => ({}))) as { action?: string; send?: boolean; person?: string }
+    const who = async () => personByRole(e, body.person === 'spouse' ? 'spouse' : 'client')
     switch (body.action) {
-      case 'resend':
-        await resendInvite(e)
-        return NextResponse.json({ ok: true, message: `Link emailed to ${e.client_email}.` })
+      case 'resend': {
+        const p = await who()
+        await resendInvite(e, p)
+        return NextResponse.json({ ok: true, message: `Link emailed to ${p.email}.` })
+      }
       case 'new-link': {
-        const r = await replaceLink(e, body.send === true)
-        return NextResponse.json({ ok: true, link: r.link, message: r.emailed ? `New link emailed to ${e.client_email}. The old link no longer works.` : 'New link created. The old link no longer works.' })
+        const p = await who()
+        const r = await replaceLink(e, p, body.send === true)
+        return NextResponse.json({ ok: true, link: r.link, message: r.emailed ? `New link emailed to ${p.email}. The old link no longer works.` : 'New link created. The old link no longer works.' })
+      }
+      case 'rebuild-pdf': {
+        const p = await who()
+        if (!p.submitted_at) return NextResponse.json({ error: `${p.name} has not submitted the questionnaire yet.` }, { status: 409 })
+        await writeQuestionnairePdf(e, p, new Date(p.submitted_at))
+        return NextResponse.json({ ok: true, message: `The PDF for ${p.name} was rebuilt in Nextcloud.` })
       }
       case 'refresh': {
         const r = await refreshSigning(e)
@@ -52,8 +64,10 @@ export async function POST(req: Request, { params }: Ctx) {
       case 'cancel':
         await updateEngagement(e.id, { status: 'canceled' })
         return NextResponse.json({ ok: true, message: 'Canceled. The link no longer works.' })
-      case 'link':
-        return NextResponse.json({ ok: true, link: linkFor(e) })
+      case 'link': {
+        const p = await who()
+        return NextResponse.json({ ok: true, link: personLink(e, p) })
+      }
       default:
         return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
     }

@@ -23,6 +23,14 @@ export const ENGAGEMENT_TYPES: Record<EngagementType, { label: string; modules: 
   custom: { label: 'Custom engagement', modules: [], focus: '' },
 }
 
+/** Short names for the top-level Nextcloud folder, e.g. "Estate Planning - John and Jane Smith". */
+export const FOLDER_LABELS: Record<EngagementType, string> = {
+  estate: 'Estate Planning',
+  invest: 'Investment Consulting',
+  portfolio: 'Portfolio Review',
+  custom: 'Engagement',
+}
+
 export const CORE_SECTIONS: { label: string; note: string }[] = [
   { label: 'About you', note: 'Contact details, household, spouse or co-owner' },
   { label: 'Goals and priorities', note: 'What matters most and what worries them' },

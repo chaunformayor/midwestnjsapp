@@ -72,7 +72,7 @@ with sync_playwright() as p:
     c = client.new_page()
     c.on('pageerror', lambda e: errors.append('client: ' + str(e)))
     c.goto(link)
-    check('client page loads', c.get_by_role('heading', name='Welcome, Jordan & Taylor Ellis').is_visible())
+    check('client page loads', c.get_by_role('heading', name='Welcome, Jordan Ellis').is_visible())
     c.screenshot(path=f'{OUT}/04-client-welcome.png', full_page=True)
     c.get_by_role('button', name='Start with the agreements').click()
     check('agreement shows fees', c.get_by_text('$2,500').first.is_visible())
@@ -131,7 +131,8 @@ with sync_playwright() as p:
     check('status signed after callback', eng['status'] == 'signed')
     check('signed PDF saved', any(f[0].endswith('- signed.pdf') for f in st['files']))
     signed_emails = [e['subject'] for e in st['emails'] if 'signed' in (e['subject'] or '').lower()]
-    check('signed emails sent (admin + client)', len(signed_emails) == 2, signed_emails)
+    check('signed emails sent (admin + client + spouse)', len(signed_emails) == 3, signed_emails)
+    check('signing certificate saved', any(f[0].endswith('Agreements/Signing Certificate.pdf') for f in st['files']))
     c.get_by_role('heading', name='Agreements signed').wait_for(timeout=15000)
     check('client page picked up signature', True)
     token = link.split('/onboarding/')[1].split('?')[0]
@@ -174,8 +175,8 @@ with sync_playwright() as p:
     c.get_by_role('button', name='Submit questionnaire').click()
     c.get_by_role('heading', name='Upload your documents').wait_for(timeout=20000)
     st = mock('/__mock/state')
-    check('questionnaire PDF saved', any(f[0].endswith('Intake Questionnaire.pdf') for f in st['files']))
-    check('status submitted', st['db']['onboarding_engagements'][0]['status'] == 'submitted')
+    check('questionnaire PDF saved', any(f[0].endswith('Questionnaire/Questionnaire and Document Checklist.pdf') for f in st['files']))
+    check('client marked submitted; engagement waits for the spouse', any(p['role'] == 'client' and p['submitted_at'] for p in st['db']['onboarding_people']) and st['db']['onboarding_engagements'][0]['status'] == 'signed')
     subs = [e['subject'] for e in st['emails'] if 'questionnaire submitted' in (e['subject'] or '').lower() or 'received your questionnaire' in (e['subject'] or '').lower()]
     check('submitted emails sent (admin + client)', len(subs) == 2, subs)
 

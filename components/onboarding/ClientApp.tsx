@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ENGAGEMENT_TYPES, MIS_CONTACT, PAY_OPTIONS, firstName, householdName } from '@/lib/onboarding/config'
+import { ENGAGEMENT_TYPES, MIS_CONTACT, PAY_OPTIONS, firstName } from '@/lib/onboarding/config'
 import { engagementAgreement, ndaAgreement } from '@/lib/onboarding/agreements'
 import { answeredCount, buildParts, docItems, docsDone, validatePart, type Answers, type DocState, type Val } from '@/lib/onboarding/questionnaire'
 import type { ClientView } from '@/lib/onboarding/service'
@@ -75,7 +75,8 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
 
   const signed = view.status === 'signed' || view.status === 'submitted'
   const submitted = view.status === 'submitted'
-  const parts = useMemo(() => buildParts(view.modules, answers), [view.modules, answers])
+  const partnerName = view.partner?.name
+  const parts = useMemo(() => buildParts(view.modules, answers, partnerName), [view.modules, answers, partnerName])
   const partIndex = Math.max(0, parts.findIndex((p) => p.id === partId))
   const part = parts[partIndex]
   const items = useMemo(() => docItems(view.modules, answers), [view.modules, answers])
@@ -84,7 +85,7 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
   // Mark parts before the saved one as visited when the page first loads.
   useEffect(() => {
     if (initial.part) {
-      const ps = buildParts(initial.modules, initial.answers)
+      const ps = buildParts(initial.modules, initial.answers, initial.partner?.name)
       const i = initial.part === 'final' ? ps.length : ps.findIndex((p) => p.id === initial.part)
       setVisited(ps.slice(0, Math.max(0, i)).map((p) => p.id))
     }
@@ -212,11 +213,6 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
         if (v['p1.name'] == null) v['p1.name'] = sign.name1
         if (v['p1.email'] == null) v['p1.email'] = sign.email1
         if (v['hh.address'] == null) v['hh.address'] = sign.address
-        if (view.spouse_name) {
-          if (v['hh.spouse'] == null) v['hh.spouse'] = 'Yes'
-          if (v['p2.name'] == null) v['p2.name'] = sign.name2
-          if (v['p2.email'] == null) v['p2.email'] = sign.email2
-        } else if (v['hh.spouse'] == null) v['hh.spouse'] = 'No'
         return { ...a, v }
       })
       toTop()
@@ -473,7 +469,17 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
             </div>
           </div>
 
-          {view.status === 'invited' && (
+          {view.status === 'invited' && view.me.role === 'spouse' && (
+            <section className={cn(card, 'flex flex-col gap-4')}>
+              <h3 className="font-head text-navy text-xl">Waiting for {firstName(view.client_name)} to start the signing</h3>
+              <p className="text-[13px] text-gray-600">
+                {firstName(view.client_name)} reviews the agreements and sends them out for signature. LibreSign then emails you your own signing link. Once everyone has signed, this page unlocks your own questionnaire and document uploads.
+              </p>
+              <button type="button" className={btnGhost} onClick={checkNow} disabled={busy}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} Check again</button>
+            </section>
+          )}
+
+          {view.status === 'invited' && view.me.role === 'client' && (
             <section className={cn(card, 'flex flex-col gap-4')}>
               <div>
                 <h3 className="font-head text-navy text-xl">Before you sign</h3>
@@ -542,9 +548,21 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
             <section className={cn(card, 'flex flex-col gap-4')}>
               <div>
                 <h3 className="font-head text-navy text-xl">Agreements signed</h3>
-                <p className="text-[13px] text-gray-500 mt-1">{view.signed_at ? `Signed ${format(new Date(view.signed_at), 'MMMM d, yyyy')}. ` : ''}Keep a copy of the signed PDF for your records.</p>
+                <p className="text-[13px] text-gray-500 mt-1">{view.signed_at ? `Fully signed ${format(new Date(view.signed_at), 'MMMM d, yyyy')}. ` : ''}Keep a copy of the signed PDF and the certificate for your records.</p>
               </div>
+              {view.signers_done.length > 0 && (
+                <ul aria-label="Signatures" className="flex flex-col gap-2">
+                  {view.signers_done.map((s) => (
+                    <li key={s.name} className="flex items-center justify-between gap-3 border border-gray-200 rounded-md px-3 py-2">
+                      <span className="text-sm font-semibold text-navy min-w-0 truncate">{s.name}</span>
+                      <span className="text-xs text-green-800 text-right">Signed{s.signed_at && s.signed_at !== 'signed' ? ` ${format(new Date(s.signed_at), 'MMM d, yyyy h:mm a')}` : ''}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <a href={`${api}/signed`} className={btnGhost}>Download signed agreements (PDF)</a>
+              <a href={`${api}/signed?doc=certificate`} className={btnGhost}>Download signing certificate (PDF)</a>
+              {view.validationUrl && <a href={view.validationUrl} target="_blank" rel="noopener noreferrer" className="text-[13px] font-semibold text-navy underline underline-offset-2 hover:text-gold">Verify the signatures online</a>}
               <button type="button" className={btnPrimary} onClick={() => goStep(2)}>{submitted ? 'View the questionnaire' : 'Continue to the questionnaire'}</button>
             </section>
           )}
@@ -658,10 +676,13 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
     return (
       <section className={card}>
         <p className={kicker}>Step 5 of 5</p>
-        <h2 className="font-head text-navy text-2xl mt-1.5">You&apos;re all set, {firstName(view.sign_details?.name1 ?? view.client_name) || 'thank you'}</h2>
+        <h2 className="font-head text-navy text-2xl mt-1.5">You&apos;re all set, {firstName(view.me.name) || 'thank you'}</h2>
         <p className="text-gray-600 mt-3 max-w-[66ch]">
           We have your signed agreements and questionnaire{handled < items.length ? `, plus ${handled} of ${items.length} documents. You can upload the rest anytime from this same link.` : ' and documents.'}
         </p>
+        {view.partner && !view.partner.submitted && (
+          <p className="text-sm text-gray-600 mt-3 max-w-[66ch]">{view.partner.name} still has their own questionnaire and documents to finish from their own link. We&apos;ll start our review once everyone is in.</p>
+        )}
         <h4 className={cn(eyebrowCls, 'mt-6')}>What happens next</h4>
         <ol className="mt-3 flex flex-col gap-3.5">
           {[
@@ -683,6 +704,7 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
         <div className="flex flex-wrap gap-3 mt-8 pt-5 border-t border-gray-200">
           <button type="button" className={btnGhost} onClick={() => goStep(3)}>Back to documents</button>
           <a href={`${api}/signed`} className={btnGhost}>Download signed agreements (PDF)</a>
+          <a href={`${api}/signed?doc=certificate`} className={btnGhost}>Download signing certificate (PDF)</a>
         </div>
       </section>
     )
@@ -693,7 +715,8 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
       <div className="flex justify-between items-end gap-3 flex-wrap mb-5">
         <div>
           <p className={kicker}>{ENGAGEMENT_TYPES[view.engagement_type]?.label}</p>
-          <h1 className="font-head text-navy text-[28px] sm:text-[34px] leading-tight mt-1">Welcome, {householdName(view.client_name, view.spouse_name)}</h1>
+          <h1 className="font-head text-navy text-[28px] sm:text-[34px] leading-tight mt-1">Welcome, {view.me.name}</h1>
+          {view.partner && <p className="text-sm text-gray-500 mt-1">Your own link and your own questionnaire. {view.partner.name} has theirs too.</p>}
         </div>
         {savedText && (
           <span className={cn('text-[12.5px] flex items-center gap-2', saveState === 'error' ? 'text-red-700' : 'text-gray-500')}>
