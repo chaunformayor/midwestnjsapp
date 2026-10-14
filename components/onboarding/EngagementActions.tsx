@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Copy, ExternalLink, Mail, RefreshCw, RotateCcw, XCircle, Link2 } from 'lucide-react'
+import { Copy, ExternalLink, Mail, MailCheck, RefreshCw, RotateCcw, XCircle, Link2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { EngagementStatus } from '@/lib/onboarding/config'
 
@@ -57,10 +57,11 @@ export default function EngagementActions({ id, link, status, email }: { id: str
       ) : null}
       {!closed && (
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={ghost} disabled={!!busy || !current} onClick={() => act('resend')}><Mail className="w-4 h-4" /> Email link to {email}</button>
+          <button type="button" className={ghost} disabled={!!busy || !current} onClick={() => act('resend')}><Mail className="w-4 h-4" /> Email onboarding link to {email}</button>
           {confirm === 'new-link'
             ? <button type="button" className={cn(btn, 'border-amber-300 bg-amber-50 text-amber-900')} disabled={!!busy} onClick={() => act('new-link', { send: true })}><Link2 className="w-4 h-4" /> Confirm: replace and email new link</button>
             : <button type="button" className={ghost} disabled={!!busy} onClick={() => setConfirm('new-link')}><Link2 className="w-4 h-4" /> Make a new link</button>}
+          {status === 'signing' && <button type="button" className={ghost} disabled={!!busy} onClick={() => act('remind')}><MailCheck className="w-4 h-4" /> Resend signing email</button>}
           {status === 'signing' && <button type="button" className={ghost} disabled={!!busy} onClick={() => act('refresh')}><RefreshCw className={cn('w-4 h-4', busy === 'refresh' && 'animate-spin')} /> Check LibreSign now</button>}
           {status === 'signing' && (confirm === 'reset'
             ? <button type="button" className={cn(btn, 'border-amber-300 bg-amber-50 text-amber-900')} disabled={!!busy} onClick={() => act('reset-signing')}><RotateCcw className="w-4 h-4" /> Confirm reset</button>

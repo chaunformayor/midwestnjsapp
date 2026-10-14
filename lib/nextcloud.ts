@@ -171,7 +171,9 @@ export type LibreSignSigner = {
   identifyMethods?: { method?: string; value?: string }[]
   signed?: string | null
   sign_date?: string | null
+  /** LibreSign only returns this for the signer who is viewing, never to the requester */
   sign_request_uuid?: string
+  signRequestId?: number
   signingOrder?: number
 }
 
@@ -212,6 +214,11 @@ export async function libresignRequest(opts: { name: string; pdf: Buffer; signer
   }
   if (opts.callback) body.callback = opts.callback
   return ocs<LibreSignFile>(`${API}/request-signature`, { method: 'POST', body: JSON.stringify(body) })
+}
+
+/** Asks LibreSign to email one signer their signing link again. Only the account that sent the request can do this. */
+export async function libresignNotifySigner(fileId: number, signRequestId: number) {
+  return ocs<{ message?: string }>(`${API}/notify/signer`, { method: 'POST', body: JSON.stringify({ fileId, signRequestId }) })
 }
 
 export async function libresignValidate(uuid: string) {

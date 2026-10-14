@@ -64,6 +64,7 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
   const [uploading, setUploading] = useState<Record<string, string>>({})
   const [docErrors, setDocErrors] = useState<Record<string, string>>({})
   const [toast, setToast] = useState('')
+  const [notice, setNotice] = useState('')
   const [sign, setSign] = useState({
     name1: initial.client_name, email1: initial.client_email,
     name2: initial.spouse_name ?? '', email2: initial.spouse_email ?? '',
@@ -235,6 +236,24 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
         setView(v)
         showToast(v.status === 'signed' ? 'Agreements signed' : 'Still waiting on a signature')
       }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resendSigningEmail() {
+    setBusy(true); setErrors([]); setNotice('')
+    try {
+      const res = await fetch(`${api}/remind`, { method: 'POST' })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setErrors([j.error || 'Something went wrong. Please try again.']); return }
+      const r = j as { sentTo: string[]; view: ClientView }
+      setView(r.view)
+      setNotice(r.sentTo.length
+        ? `Sent again to ${r.sentTo.join(' and ')}. It comes from our Nextcloud system and can take a few minutes. Check spam too.`
+        : 'Everyone has signed.')
+    } catch {
+      setErrors(["We couldn't reach the server. Check your connection and try again."])
     } finally {
       setBusy(false)
     }
@@ -484,15 +503,21 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
             <section className={cn(card, 'flex flex-col gap-4')}>
               <div>
                 <h3 className="font-head text-navy text-xl">Sign in LibreSign</h3>
-                <p className="text-[13px] text-gray-500 mt-1">We also emailed each signer a link. LibreSign will email you a short code to confirm it&apos;s you. This page updates on its own once everyone signs.</p>
+                <p className="text-[13px] text-gray-500 mt-1">
+                  LibreSign, our secure signing system, emailed a signing link to each person below. Open that email, click the link, and enter the short code LibreSign sends to confirm it&apos;s you. This page updates on its own once everyone signs.
+                </p>
               </div>
+              <Errors list={errors} />
               <div className="flex flex-col gap-2.5">
                 {clientSigners.map((s) => (
-                  <div key={s.name} className="flex items-center justify-between gap-3 border border-gray-200 rounded-md px-3 py-2.5">
-                    <span className="min-w-0"><b className="font-semibold text-sm text-navy block truncate">{s.name}</b></span>
+                  <div key={s.name + s.email} className="flex items-center justify-between gap-3 border border-gray-200 rounded-md px-3 py-2.5">
+                    <span className="min-w-0">
+                      <b className="font-semibold text-sm text-navy block truncate">{s.name}</b>
+                      {s.email && <small className="text-xs text-gray-500 block break-all">{s.signed_at ? 'Signed' : `Link sent to ${s.email}`}</small>}
+                    </span>
                     {s.signed_at ? <Chip tone="ok">Signed</Chip> : s.signUrl
                       ? <a href={s.signUrl} target="_blank" rel="noopener noreferrer" className={cn(btn, 'px-3.5 py-2 bg-gold text-navy hover:bg-gold-light')}>Sign now</a>
-                      : <Chip tone="wait">Waiting</Chip>}
+                      : <Chip tone="wait">Check email</Chip>}
                   </div>
                 ))}
                 <div className="flex items-center justify-between gap-3 border border-gray-200 rounded-md px-3 py-2.5">
@@ -500,7 +525,15 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
                   <Chip>Next</Chip>
                 </div>
               </div>
+              {notice && <p role="status" className="text-sm text-green-800">{notice}</p>}
               <button type="button" className={btnGhost} onClick={checkNow} disabled={busy}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} I&apos;ve signed — check now</button>
+              {clientSigners.some((s) => !s.signed_at) && (
+                <div className="text-xs text-gray-500 flex flex-col gap-1.5">
+                  <p>No email? Check your spam or junk folder for a message from Nextcloud or LibreSign.</p>
+                  <button type="button" onClick={resendSigningEmail} disabled={busy} className="self-start font-semibold text-navy underline underline-offset-2 hover:text-gold disabled:opacity-50">Send the signing email again</button>
+                  <p>Wrong email address above? Call us at {MIS_CONTACT.phone} and we&apos;ll fix it.</p>
+                </div>
+              )}
             </section>
           )}
 

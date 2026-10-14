@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { currentAdmin, getEngagement, updateEngagement } from '@/lib/onboarding/server'
-import { linkFor, refreshSigning, replaceLink, resendInvite } from '@/lib/onboarding/service'
+import { linkFor, refreshSigning, replaceLink, resendInvite, resendSigningEmail } from '@/lib/onboarding/service'
 import { handleError } from '@/lib/onboarding/http'
+import { NextcloudError } from '@/lib/nextcloud'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +13,7 @@ type Ctx = { params: Promise<{ id: string }> }
  *   resend         email the same link again
  *   new-link       replace the link (the old one stops working); email it if send=true
  *   refresh        check LibreSign now
+ *   remind         have LibreSign email the signing link again to client signers who haven't signed
  *   reset-signing  go back to before signing, e.g. after a typo in a signer's email
  *   cancel         turn the link off
  */
@@ -35,6 +37,13 @@ export async function POST(req: Request, { params }: Ctx) {
         const r = await refreshSigning(e)
         return NextResponse.json({ ok: true, status: r?.status ?? e.status, message: r?.status === 'signed' ? 'Everyone has signed.' : 'Checked LibreSign. Still waiting on a signature.' })
       }
+      case 'remind': {
+        const r = await resendSigningEmail(e)
+        return NextResponse.json({
+          ok: true,
+          message: r.sentTo.length ? `LibreSign is emailing the signing link again to ${r.sentTo.join(' and ')}.` : 'Everyone has signed.',
+        })
+      }
       case 'reset-signing':
         if (e.status !== 'signing') return NextResponse.json({ error: 'Only a request that is waiting for signatures can be reset.' }, { status: 409 })
         await updateEngagement(e.id, { status: 'invited', libresign_uuid: null, libresign_status: null, signers_status: null, sign_details: null, sent_for_signature_at: null })
@@ -48,6 +57,11 @@ export async function POST(req: Request, { params }: Ctx) {
         return NextResponse.json({ error: 'Unknown action.' }, { status: 400 })
     }
   } catch (err) {
+    // Admins get LibreSign's or Nextcloud's own wording, which says what to fix
+    if (err instanceof NextcloudError) {
+      console.error('onboarding admin: Nextcloud error', err.status, err.message)
+      return NextResponse.json({ error: err.message }, { status: 502 })
+    }
     return handleError(err)
   }
 }

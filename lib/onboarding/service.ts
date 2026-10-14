@@ -10,7 +10,7 @@ import { engagementAgreement, ndaAgreement, hasBlanks, type AgreementContext } f
 import { agreementsPdf, questionnairePdf } from './pdf'
 import { buildParts, docItems, docsDone, summarize, validatePart, type Answers, type DocState, EMPTY_ANSWERS } from './questionnaire'
 import {
-  NextcloudError, ensureFolder, putFile, getJson, putJson, folderWebUrl, libresignRequest, libresignValidate, libresignDownload,
+  NextcloudError, ensureFolder, putFile, getJson, putJson, folderWebUrl, libresignRequest, libresignValidate, libresignDownload, libresignNotifySigner,
   signingPageUrl, LS_STATUS, chunkStart, chunkPut, chunkFinish, chunkAbort, type LibreSignFile, type SignerInput,
 } from '@/lib/nextcloud'
 import {
@@ -129,7 +129,7 @@ export type ClientView = {
   pay_methods: string[]
   status: Engagement['status']
   sign_details: SignDetails | null
-  signers: { name: string; signed_at: string | null; signUrl: string | null }[]
+  signers: { name: string; email: string; signed_at: string | null; signUrl: string | null }[]
   signed_at: string | null
   submitted_at: string | null
   mis: MisSettings
@@ -173,6 +173,7 @@ export async function clientView(e: Engagement): Promise<ClientView> {
     sign_details: e.sign_details,
     signers: (e.signers_status ?? []).filter((s) => s.email).map((s) => ({
       name: s.name,
+      email: s.email ?? '',
       signed_at: s.signed_at,
       signUrl: !s.signed_at && s.sign_request_uuid && e.status === 'signing' ? safeSigningUrl(s.sign_request_uuid) : null,
     })),
@@ -284,6 +285,11 @@ export async function startSigning(e: Engagement, body: Record<string, unknown>)
     callback: callbackUrl(e.id),
   })
 
+  console.info('onboarding: sent for signature', JSON.stringify({
+    engagement: e.id, file: file.id, status: file.status, flow: file.signatureFlow,
+    signers: (file.signers ?? []).map((x) => ({ order: x.signingOrder, methods: (x.identifyMethods ?? []).map((m) => m.method), id: x.signRequestId })),
+  }))
+
   const updated = await updateEngagement(e.id, {
     status: 'signing',
     sign_details: details,
@@ -299,26 +305,61 @@ export async function startSigning(e: Engagement, body: Record<string, unknown>)
  * Normalizes LibreSign's signer list. Clients sign by email; MIS signs with its
  * Nextcloud account. LibreSign versions differ in which fields they return, so
  * this falls back from identify methods, to signing order, to position.
+ * LibreSign never gives the requester a signer's own link (sign_request_uuid),
+ * so clients get their link by email; signRequestId lets us re-send it.
  */
 function signersFrom(file: LibreSignFile, d: Pick<SignDetails, 'email1' | 'email2'>): NonNullable<Engagement['signers_status']> {
   const known = [d.email1, d.email2].filter(Boolean).map((x) => String(x).toLowerCase())
   const list = file.signers ?? []
-  const misAccount = Boolean((process.env.MIS_SIGNER_ACCOUNT ?? '').trim())
+  const misAccount = (process.env.MIS_SIGNER_ACCOUNT ?? '').trim().toLowerCase()
   return list.map((s, i) => {
     const im = s.identifyMethods ?? []
-    const email = (s.email || im.find((m) => m.method === 'email')?.value || '').toLowerCase()
+    const byEmail = (im.find((m) => m.method === 'email')?.value ?? '').toLowerCase()
+    const byAccount = (im.find((m) => m.method === 'account')?.value ?? '').toLowerCase()
+    const email = byEmail || (s.email ?? '').toLowerCase()
     let isMis: boolean
-    if (im.length) isMis = im.some((m) => m.method === 'account')
+    if (byAccount && misAccount && byAccount === misAccount) isMis = true
+    else if (byEmail) isMis = false // MIS always signs with its account, never by email
+    else if (im.length) isMis = Boolean(byAccount)
     else if (email) isMis = !known.includes(email)
-    else if (typeof s.signingOrder === 'number') isMis = misAccount && s.signingOrder > 1
-    else isMis = misAccount && i === list.length - 1
+    else if (typeof s.signingOrder === 'number') isMis = Boolean(misAccount) && s.signingOrder > 1
+    else isMis = Boolean(misAccount) && i === list.length - 1
     return {
       name: s.displayName || email || (isMis ? 'Midwest Investor Services' : 'Signer'),
       email: isMis ? undefined : email || known[i] || d.email1,
       signed_at: (s.signed || s.sign_date) ?? null,
       sign_request_uuid: s.sign_request_uuid,
+      sign_request_id: typeof s.signRequestId === 'number' ? s.signRequestId : undefined,
     }
   })
+}
+
+const RESEND_WAIT_MS = 60_000
+
+/**
+ * Asks LibreSign to email the signing link again to every client signer who
+ * hasn't signed yet. Returns the addresses it was sent to.
+ */
+export async function resendSigningEmail(e: Engagement): Promise<{ sentTo: string[]; engagement: Engagement }> {
+  if (e.status !== 'signing' || !e.libresign_uuid) throw new UserError('There is nothing waiting to be signed right now.', 409)
+  const details = e.sign_details
+  if (!details) throw new UserError('The signing details are missing. Ask Midwest Investor Services to reset signing.', 409)
+  const last = details.reminded_at ? Date.parse(details.reminded_at) : 0
+  if (last && Date.now() - last < RESEND_WAIT_MS) {
+    throw new UserError('The signing email was just sent. Give it a minute or two, and check your spam folder.', 429)
+  }
+  const file = await libresignValidate(e.libresign_uuid)
+  if (file.status === LS_STATUS.SIGNED) {
+    const done = (await refreshSigning(e)) ?? e
+    return { sentTo: [], engagement: done }
+  }
+  if (typeof file.id !== 'number') throw new NextcloudError('LibreSign: the file id was missing from the status response', 502)
+  const pending = signersFrom(file, details).filter((x) => x.email && !x.signed_at && typeof x.sign_request_id === 'number')
+  if (!pending.length) throw new UserError('Everyone on your side has signed. Midwest Investor Services signs next.', 409)
+  for (const x of pending) await libresignNotifySigner(file.id, x.sign_request_id as number)
+  console.info('onboarding: signing email re-sent', JSON.stringify({ engagement: e.id, file: file.id, count: pending.length }))
+  const updated = await updateEngagement(e.id, { sign_details: { ...details, reminded_at: new Date().toISOString() } })
+  return { sentTo: pending.map((x) => x.email as string), engagement: updated ?? e }
 }
 
 /** Checks LibreSign for progress. Finishes up once everyone has signed. */
@@ -333,7 +374,11 @@ export async function refreshSigning(e: Engagement, callbackPdf?: Buffer): Promi
   }
   const signers = signersFrom(file, e.sign_details ?? { email1: e.client_email })
   // Keep sign links we already know about if LibreSign leaves them out of this response
-  const merged = signers.map((s, i) => ({ ...s, sign_request_uuid: s.sign_request_uuid ?? e.signers_status?.[i]?.sign_request_uuid }))
+  const merged = signers.map((s, i) => ({
+    ...s,
+    sign_request_uuid: s.sign_request_uuid ?? e.signers_status?.[i]?.sign_request_uuid,
+    sign_request_id: s.sign_request_id ?? e.signers_status?.[i]?.sign_request_id,
+  }))
   if (file.status !== LS_STATUS.SIGNED) {
     if (file.status !== e.libresign_status || JSON.stringify(merged) !== JSON.stringify(e.signers_status)) {
       return (await updateEngagement(e.id, { libresign_status: file.status, signers_status: merged })) ?? e

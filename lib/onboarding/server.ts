@@ -24,7 +24,7 @@ export type Engagement = {
   sign_details: SignDetails | null
   libresign_uuid: string | null
   libresign_status: number | null
-  signers_status: { name: string; signed_at: string | null; sign_request_uuid?: string; email?: string }[] | null
+  signers_status: { name: string; signed_at: string | null; sign_request_uuid?: string; sign_request_id?: number; email?: string }[] | null
   nextcloud_folder: string | null
   questionnaire_part: string | null
   docs_total: number
@@ -47,6 +47,8 @@ export type SignDetails = {
   payOption: string
   date: string
   mis: MisSettings
+  /** When the signing email was last re-sent (limits repeat sends) */
+  reminded_at?: string
 }
 
 // ---------------------------------------------------------------- secrets
