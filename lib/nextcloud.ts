@@ -175,6 +175,10 @@ export type LibreSignSigner = {
   sign_request_uuid?: string
   signRequestId?: number
   signingOrder?: number
+  /** Newer LibreSign: sign request status (0 draft, 1 able to sign, 2 signed, 3 rejected, 4 observing) */
+  status?: number
+  displayStatus?: string
+  statusText?: string
 }
 
 export type LibreSignFile = {

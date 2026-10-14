@@ -10,7 +10,7 @@ import { engagementAgreement, ndaAgreement, hasBlanks, type AgreementContext } f
 import { agreementsPdf, questionnairePdf } from './pdf'
 import { buildParts, docItems, docsDone, summarize, validatePart, type Answers, type DocState, EMPTY_ANSWERS } from './questionnaire'
 import {
-  NextcloudError, ensureFolder, putFile, getJson, putJson, folderWebUrl, libresignRequest, libresignValidate, libresignDownload, libresignNotifySigner,
+  type LibreSignSigner, NextcloudError, ensureFolder, putFile, getJson, putJson, folderWebUrl, libresignRequest, libresignValidate, libresignDownload, libresignNotifySigner,
   signingPageUrl, LS_STATUS, chunkStart, chunkPut, chunkFinish, chunkAbort, type LibreSignFile, type SignerInput,
 } from '@/lib/nextcloud'
 import {
@@ -310,7 +310,10 @@ export async function startSigning(e: Engagement, body: Record<string, unknown>)
  */
 function signersFrom(file: LibreSignFile, d: Pick<SignDetails, 'email1' | 'email2'>): NonNullable<Engagement['signers_status']> {
   const known = [d.email1, d.email2].filter(Boolean).map((x) => String(x).toLowerCase())
-  const list = file.signers ?? []
+  const all = file.signers ?? []
+  // Partly signed files can also list signatures read from the PDF itself; those
+  // have no sign request id and would show up as extra signers.
+  const list = all.some((x) => typeof x.signRequestId === 'number') ? all.filter((x) => typeof x.signRequestId === 'number') : all
   const misAccount = (process.env.MIS_SIGNER_ACCOUNT ?? '').trim().toLowerCase()
   return list.map((s, i) => {
     const im = s.identifyMethods ?? []
@@ -327,11 +330,37 @@ function signersFrom(file: LibreSignFile, d: Pick<SignDetails, 'email1' | 'email
     return {
       name: s.displayName || email || (isMis ? 'Midwest Investor Services' : 'Signer'),
       email: isMis ? undefined : email || known[i] || d.email1,
-      signed_at: (s.signed || s.sign_date) ?? null,
+      signed_at: signedAt(s),
       sign_request_uuid: s.sign_request_uuid,
       sign_request_id: typeof s.signRequestId === 'number' ? s.signRequestId : undefined,
     }
   })
+}
+
+/** When a signer signed; falls back to the status fields newer LibreSign versions send. */
+function signedAt(s: LibreSignSigner): string | null {
+  const when = s.signed || s.sign_date
+  if (when) return when
+  const signed = s.status === 2 || /^signed$/i.test(s.displayStatus ?? '') || /^signed$/i.test(s.statusText ?? '')
+  return signed ? SIGNED_UNKNOWN_TIME : null
+}
+const SIGNED_UNKNOWN_TIME = 'signed'
+
+/** One line per signer, as LibreSign reports it. For the admin page and the logs. */
+export async function describeSigning(e: Engagement): Promise<string> {
+  if (!e.libresign_uuid) return 'Not sent to LibreSign yet.'
+  const file = await libresignValidate(e.libresign_uuid)
+  const signers = file.signers ?? []
+  console.info('onboarding: LibreSign status', JSON.stringify({
+    engagement: e.id, file: file.id, status: file.status, flow: file.signatureFlow,
+    signers: signers.map((x) => ({
+      id: x.signRequestId, order: x.signingOrder, methods: (x.identifyMethods ?? []).map((m) => m.method),
+      signed: Boolean(x.signed || x.sign_date), status: x.status, displayStatus: x.displayStatus, keys: Object.keys(x).sort(),
+    })),
+  }))
+  const fileText = file.statusText || (['Draft', 'Ready to sign', 'Partly signed', 'Signed'][file.status] ?? `status ${file.status}`)
+  const people = signers.map((x) => `${x.displayName || 'Signer'}: ${x.signed || x.sign_date || signedAt(x) ? 'signed' : x.statusText || 'not signed yet'}`)
+  return `LibreSign says the document is "${fileText}". ${people.join('; ')}.`
 }
 
 const RESEND_WAIT_MS = 60_000
@@ -378,6 +407,7 @@ export async function refreshSigning(e: Engagement, callbackPdf?: Buffer): Promi
     ...s,
     sign_request_uuid: s.sign_request_uuid ?? e.signers_status?.[i]?.sign_request_uuid,
     sign_request_id: s.sign_request_id ?? e.signers_status?.[i]?.sign_request_id,
+    signed_at: s.signed_at === SIGNED_UNKNOWN_TIME ? (e.signers_status?.[i]?.signed_at || new Date().toISOString()) : s.signed_at,
   }))
   if (file.status !== LS_STATUS.SIGNED) {
     if (file.status !== e.libresign_status || JSON.stringify(merged) !== JSON.stringify(e.signers_status)) {

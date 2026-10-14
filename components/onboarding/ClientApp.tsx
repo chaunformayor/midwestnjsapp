@@ -246,6 +246,7 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
     try {
       const res = await fetch(`${api}/remind`, { method: 'POST' })
       const j = await res.json().catch(() => ({}))
+      if (res.status === 429 && j.error) { setNotice(j.error); return }
       if (!res.ok) { setErrors([j.error || 'Something went wrong. Please try again.']); return }
       const r = j as { sentTo: string[]; view: ClientView }
       setView(r.view)
@@ -513,7 +514,7 @@ export default function ClientApp({ token, initial }: { token: string; initial: 
                   <div key={s.name + s.email} className="flex items-center justify-between gap-3 border border-gray-200 rounded-md px-3 py-2.5">
                     <span className="min-w-0">
                       <b className="font-semibold text-sm text-navy block truncate">{s.name}</b>
-                      {s.email && <small className="text-xs text-gray-500 block break-all">{s.signed_at ? 'Signed' : `Link sent to ${s.email}`}</small>}
+                      {s.email && <small className="text-xs text-gray-500 block break-all">{s.signed_at ? s.email : `Link sent to ${s.email}`}</small>}
                     </span>
                     {s.signed_at ? <Chip tone="ok">Signed</Chip> : s.signUrl
                       ? <a href={s.signUrl} target="_blank" rel="noopener noreferrer" className={cn(btn, 'px-3.5 py-2 bg-gold text-navy hover:bg-gold-light')}>Sign now</a>

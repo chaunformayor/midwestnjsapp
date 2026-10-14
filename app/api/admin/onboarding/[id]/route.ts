@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { currentAdmin, getEngagement, updateEngagement } from '@/lib/onboarding/server'
-import { linkFor, refreshSigning, replaceLink, resendInvite, resendSigningEmail } from '@/lib/onboarding/service'
+import { describeSigning, linkFor, refreshSigning, replaceLink, resendInvite, resendSigningEmail } from '@/lib/onboarding/service'
 import { handleError } from '@/lib/onboarding/http'
 import { NextcloudError } from '@/lib/nextcloud'
 
@@ -35,7 +35,8 @@ export async function POST(req: Request, { params }: Ctx) {
       }
       case 'refresh': {
         const r = await refreshSigning(e)
-        return NextResponse.json({ ok: true, status: r?.status ?? e.status, message: r?.status === 'signed' ? 'Everyone has signed.' : 'Checked LibreSign. Still waiting on a signature.' })
+        if (r?.status === 'signed') return NextResponse.json({ ok: true, status: r.status, message: 'Everyone has signed.' })
+        return NextResponse.json({ ok: true, status: r?.status ?? e.status, message: await describeSigning(r ?? e) })
       }
       case 'remind': {
         const r = await resendSigningEmail(e)
