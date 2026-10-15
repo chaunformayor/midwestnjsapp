@@ -236,6 +236,7 @@ export async function ensurePeople(e: Engagement): Promise<Person[]> {
       engagement_id: e.id, role: 'client', name: e.client_name, email: e.client_email,
       nextcloud_folder: e.nextcloud_folder, questionnaire_part: e.questionnaire_part,
       docs_total: e.docs_total, docs_done: e.docs_done, submitted_at: e.submitted_at,
+      token_hash: null, token_enc: null,
     })
   }
   if (e.spouse_name && !have.some((p) => p.role === 'spouse')) {
@@ -243,6 +244,8 @@ export async function ensurePeople(e: Engagement): Promise<Person[]> {
     add.push({
       engagement_id: e.id, role: 'spouse', name: e.spouse_name, email: e.spouse_email ?? '',
       token_hash: hashToken(token), token_enc: encryptToken(token),
+      // A multi-row insert sends NULL for any column a row leaves out, so every row lists every column
+      nextcloud_folder: null, questionnaire_part: null, docs_total: 0, docs_done: 0, submitted_at: null,
     })
   }
   if (!add.length) return have

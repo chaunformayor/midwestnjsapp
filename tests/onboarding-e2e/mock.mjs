@@ -76,6 +76,11 @@ async function rest(req, res, table, url, body) {
   if (req.method === 'POST') {
     const prefer = req.headers.prefer || ''
     const list = Array.isArray(data) ? data : [data]
+    // Like PostgREST: in a multi-row insert, a column one row leaves out is sent as NULL (not its default) for that row
+    if (list.length > 1) {
+      const keys = new Set(list.flatMap((r) => Object.keys(r)))
+      for (const r of list) for (const k of keys) if (!(k in r)) r[k] = null
+    }
     const out = []
     for (const row of list) {
       if (prefer.includes('merge-duplicates')) {
