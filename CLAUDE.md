@@ -36,7 +36,9 @@ Flow: admin creates a client with that client's fees → the site emails the mai
 | `lib/onboarding/config.ts` | Engagement types, questionnaire sections, fee fields, payment options, status labels, MIS contact info |
 | `lib/onboarding/agreements.ts` | Full agreement and NDA text. One source feeds both the web view and the PDF. |
 | `lib/onboarding/questionnaire.ts` | Questionnaire definition, per-property follow-up sections, validation, document checklist |
-| `lib/onboarding/pdf.ts` | Agreement PDF, the per-person Questionnaire and Document Checklist PDF, and the Signing Certificate |
+| `lib/onboarding/pdf.ts` | Agreement PDF, the per-person Questionnaire and Document Checklist PDF, the Signing Certificate, and the client-facing recommendations PDF |
+| `supabase/migrations/006_onboarding_reviews.sql` | Review weights column and the `onboarding_reviews` table. **Run in Supabase before using the review.** |
+| `lib/onboarding/review/*` | Scoring, weights, the Claude call, and saving/PDF for reviews |
 | `lib/onboarding/server.ts` | Link tokens (hash plus encrypted copy), callback signatures, site URL and preview bypass, database access, Nextcloud paths |
 | `lib/onboarding/service.ts` | The workflow: create, invite, start signing, refresh signing, resend signing email, answers, submit, uploads |
 | `lib/nextcloud.ts` | WebDAV (folders, files, chunked upload) and the LibreSign API |
@@ -58,9 +60,19 @@ MIS Clients/<Engagement type> - <Household> (<id6>)/       e.g. Estate Planning 
 
 The PDF is built on submit and rebuilt after every later upload or not-applicable mark. Older engagements keep their old single folder for the main client.
 
+### Review and recommendations
+
+An admin button on each client's page ("Run review") scores the submitted answers, then asks Claude for recommendations. Nothing runs automatically and nothing reaches the client unless the admin makes the client PDF.
+
+- **Scoring** (`lib/onboarding/review/scoring.ts`, pure functions): seven areas (liability, asset-protection structure, insurance, estate readiness, debt and leverage, compliance, information completeness), each 0-100 per person where higher means more needs attention. The household score is the higher of the two people's. **Priority = household score × admin weight (0-5) × goal factor**; the goal factor is 1.5 / 1 / 0.6 from how High / Medium / Low the client rated the related goals. Answers that differ between spouses are listed as discrepancies.
+- **Weights** are set at `/admin/onboarding/weights` (stored in `onboarding_settings.review_weights`); starting values and descriptions live in `lib/onboarding/review/config.ts`. Each review stores the weights it used.
+- **AI step** (`lib/onboarding/review/ai.ts`): `@anthropic-ai/sdk`, model `claude-opus-5-5` (override with `ANTHROPIC_REVIEW_MODEL`), structured output (zod v4 schema), server-side `fallbacks: 'default'`. Needs `ANTHROPIC_API_KEY` in Vercel. **Client answers are sent to the Anthropic API** minus email, phone, date of birth, advisor contact details and the typed confirmation name.
+- **Results** are saved in `onboarding_reviews` (migration 006). The admin ticks which recommendations to share, can edit the client wording, and "Create client PDF" saves `Review/Recommendations for the client.pdf` in the engagement folder (no scores or internal notes) and downloads it.
+- The route that runs a review has `maxDuration = 300`.
+
 ### Signing confirmation
 
-LibreSign puts digital signatures in the PDF but not necessarily a visible stamp. The site therefore also saves `Agreements/Signing Certificate.pdf` (signers, times, LibreSign file id, SHA-256 of the signed PDF, verification link), shows the signers and times on the client's "Agreements signed" panel and the admin page, and includes them in the signed emails. The verification link is LibreSign's public page `/apps/libresign/p/validation/<uuid>`; confirm it opens on the live Nextcloud. A visible footer or QR on every page is a Nextcloud-side LibreSign setting, not something the site controls.
+LibreSign puts digital signatures in the PDF but not necessarily a visible stamp. The site therefore also saves `Agreements/Signing Certificate.pdf` (signers, times, LibreSign file id, SHA-256 of the signed PDF, verification link), shows the signers and times on the client's "Agreements signed" panel and the admin page, and includes them in the signed emails. The verification link is LibreSign's public page `/apps/libresign/validation/<uuid>`, the same address LibreSign prints in the footer. LibreSign already stamps a footer (QR code, "Digitally signed by LibreSign", validation link) on the signed PDF by default; it is controlled by Nextcloud's LibreSign settings (`add_footer`, `write_qrcode_on_footer`, `validation_site`), not by the site.
 
 ### LibreSign facts learned the hard way
 
@@ -72,6 +84,8 @@ LibreSign puts digital signatures in the PDF but not necessarily a visible stamp
 - Admin **Check LibreSign now** logs LibreSign's response shape (`onboarding: LibreSign status`) and shows each signer's state.
 
 ### Environment variables (Vercel)
+
+Review: `ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_REVIEW_MODEL`)
 
 Existing: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SITE_URL`, `ADMIN_EMAIL`, `DEALS_EMAIL`, `RESEND_API_KEY`, `AWS_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 

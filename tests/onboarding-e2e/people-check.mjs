@@ -157,6 +157,92 @@ const detail = await fetch(`${SITE}/admin/onboarding/${id}`, { headers: { cookie
 const dhtml = await detail.text()
 check('admin detail shows both people and the signing confirmation', detail.status === 200 && dhtml.includes('Taylor Ellis') && dhtml.includes('Signing confirmation'))
 
+// ---------------------------------------------------------------- review: weighted scores, AI recommendations, client PDF
+async function onboard(first, last, mk) {
+  const made2 = await admin('/api/admin/onboarding', {
+    client_name: `${first} ${last}`, client_email: `${first.toLowerCase()}@example.com`, spouse_name: `Sam ${last}`, spouse_email: `sam.${last.toLowerCase()}@example.com`,
+    engagement_type: 'estate', focus: 'protecting assets', modules: ['finances', 'estate'], fees, pay_methods: ['Check'], send_email: false,
+  })
+  const t1 = tokenOf(made2.json.link)
+  const t2 = tokenOf((await admin(`/api/admin/onboarding/${made2.json.id}`, { action: 'link', person: 'spouse' })).json.link)
+  await client(t1, '/sign', post({ name1: `${first} ${last}`, email1: `${first.toLowerCase()}@example.com`, name2: `Sam ${last}`, email2: `sam.${last.toLowerCase()}@example.com`, address: '9 Test Ln, St. Louis, MO 63101', payOption: '100% at signing', read: true }))
+  await mock('/__mock/sign-all')
+  const a1 = mk('client', `${first} ${last}`)
+  const a2 = mk('spouse', `Sam ${last}`)
+  const s1 = await client(t1, '/submit', post({ answers: a1 }))
+  const s2 = await client(t2, '/submit', post({ answers: a2 }))
+  return { id: made2.json.id, ok: s1.status === 200 && s2.status === 200, detail: `${s1.status}/${s2.status} ${JSON.stringify(s1.json).slice(0, 100)}` }
+}
+
+const rich = (who, name) => {
+  const v = {
+    'p1.name': name, 'p1.email': `${name.split(' ')[0].toLowerCase()}@example.com`, 'wrap.confirm': true, 'wrap.name': name,
+    'prop.p1.address': '500 Sample Pl #4B, St. Louis, MO 63101', 'prop.p1.ptype': 'Condo', 'prop.p1.use': 'Short-term rental', 'prop.p1.occ': 'Owner',
+    'prop.p1.value': '240,000', 'prop.p1.balance': '210,000', 'prop.p1.insurer': '', 'str.p1.told': 'No', 'str.p1.permit': 'No',
+  }
+  if (who === 'client') Object.assign(v, { 'prop.p1.title': 'Sole name', 'goal.protect': 'High', 'est.will.have': 'No', 'fin.claims': 'Yes', 'fin.claimsDetail': 'A tenant lawsuit in 2024.' })
+  else Object.assign(v, { 'prop.p1.title': 'Joint with spouse', 'goal.protect': 'Low', 'est.will.have': 'Yes' })
+  return { v, props: ['p1'] }
+}
+const hh = await onboard('Riley', 'Marsh', rich)
+check('second household submitted with a property each', hh.ok, hh.detail)
+
+const noKey = await fetch(`${SITE}/api/admin/onboarding/${hh.id}/review`, { method: 'POST' })
+check('review needs an admin', noKey.status === 401, noKey.status)
+const w0 = await fetch(`${SITE}/api/admin/onboarding/weights`)
+check('weights need an admin', w0.status === 401)
+
+const ran = await admin(`/api/admin/onboarding/${hh.id}/review`, {})
+const rv = ran.json.review
+check('review runs', ran.status === 200 && rv?.review?.priorities?.length === 2, ran.status + ' ' + JSON.stringify(ran.json).slice(0, 200))
+const row = (key) => rv.scores.rows.find((r) => r.key === key)
+check('liability scores high for a personally held short-term rental with a claim', row('liability').household >= 60, row('liability').household)
+check('the most cautious person sets the household score', row('liability').household === Math.max(...row('liability').people.map((p) => p.score)))
+check('the two people are scored separately', row('liability').people.length === 2 && row('liability').people[0].score !== row('liability').people[1].score, JSON.stringify(row('liability').people))
+check("client's High goal raises the weight, so the factor is above 1", row('liability').goalFactor === 1.5, row('liability').goalFactor)
+check('priority is household x weight x goal factor', Math.abs(row('liability').priority - row('liability').household * row('liability').weight * row('liability').goalFactor) < 0.2, row('liability').priority)
+check('answers that differ between spouses are flagged', rv.scores.discrepancies.some((d) => /how title is held/.test(d)) && rv.scores.discrepancies.some((d) => /Goal "Protect/.test(d)), rv.scores.discrepancies.join(' | ').slice(0, 300))
+check('rows are ranked by priority', rv.scores.rows.every((r, i, a) => i === 0 || a[i - 1].priority >= r.priority))
+check('default weights stored with the review', rv.weights.liability === 5)
+
+st = await mock('/__mock/state')
+const call = st.anthropic.at(-1)
+const promptJson = JSON.stringify(call.body)
+check('Claude call uses the default model, fallbacks and a structured format', call.body.model === 'claude-opus-5-5' && call.body.fallbacks === 'default' && /server-side-fallback/.test(call.headers.beta ?? '') && Boolean(call.body.output_config?.format), JSON.stringify({ m: call.body.model, f: call.body.fallbacks, b: call.headers.beta }))
+check('prompt carries the answers and scores', /Sole name/.test(promptJson) && /Liability exposure/.test(promptJson) && /Joint with spouse/.test(promptJson))
+check('contact details are left out of the prompt', !/riley@example\.com|sam\.marsh@example\.com/.test(promptJson))
+
+// weights change the ranking
+await admin('/api/admin/onboarding/weights', { weights: { liability: 0, estate: 5 } }, 'PUT')
+const second = (await admin(`/api/admin/onboarding/${hh.id}/review`, {})).json.review
+const row2 = (key) => second.scores.rows.find((r) => r.key === key)
+check('a weight of 0 switches an area off', row2('liability').weight === 0 && row2('liability').priority === 0)
+check('the new weight is used and saved with that review', second.weights.liability === 0 && second.weights.estate === 5)
+check('latest review is the one shown', second.id !== rv.id)
+await admin('/api/admin/onboarding/weights', { weights: {} }, 'PUT')
+const back = await fetch(`${SITE}/api/admin/onboarding/weights`, { headers: { cookie: ADMIN_COOKIE } })
+check('weights reset to the starting values', (await back.json()).weights.liability === 5)
+
+// choose what the client sees, edit wording, make the PDF
+const pick = await admin(`/api/admin/onboarding/${hh.id}/review`, { review_id: second.id, included: ['r1'], edits: { r1: 'Edited client wording.' } }, 'PUT')
+check('selections and edited wording are saved', pick.status === 200 && pick.json.review.included.join() === 'r1' && pick.json.review.review.priorities[0].client_text === 'Edited client wording.', JSON.stringify(pick.json).slice(0, 160))
+const pdfRes = await fetch(`${SITE}/api/admin/onboarding/${hh.id}/review/pdf`, { method: 'POST', headers: { cookie: ADMIN_COOKIE } })
+const pdfBuf = Buffer.from(await pdfRes.arrayBuffer())
+check('client PDF is created', pdfRes.status === 200 && pdfBuf.subarray(0, 5).toString() === '%PDF-' && pdfBuf.length > 1500, pdfRes.status)
+st = await mock('/__mock/state')
+check('client PDF is saved under Review in the engagement folder', st.files.some(([p]) => /Review\/Recommendations for the client\.pdf$/.test(p)))
+const dl = await fetch(`${SITE}/api/admin/onboarding/${hh.id}/review/pdf`, { headers: { cookie: ADMIN_COOKIE } })
+check('admin can download the saved client PDF', dl.status === 200)
+const none = await admin(`/api/admin/onboarding/${hh.id}/review`, { review_id: second.id, included: [], edits: {} }, 'PUT')
+const emptyPdf = await fetch(`${SITE}/api/admin/onboarding/${hh.id}/review/pdf`, { method: 'POST', headers: { cookie: ADMIN_COOKIE } })
+check('a client PDF needs at least one selected recommendation', none.status === 200 && emptyPdf.status === 400, emptyPdf.status)
+const earlyRun = await admin(`/api/admin/onboarding/${id}/review`, {})
+check('first household (no property answers) still reviews', earlyRun.status === 200, earlyRun.status)
+const detail2 = await (await fetch(`${SITE}/admin/onboarding/${hh.id}`, { headers: { cookie: ADMIN_COOKIE } })).text()
+check('admin page shows the review', /Review and recommendations/.test(detail2) && /Weighted scores/.test(detail2) && /Move the condo into an LLC/.test(detail2))
+const wpage = await (await fetch(`${SITE}/admin/onboarding/weights`, { headers: { cookie: ADMIN_COOKIE } })).text()
+check('weights page loads', /Review weights/.test(wpage) && /Liability exposure/.test(wpage))
+
 const failed = results.filter((r) => !r[1])
 console.log(`\n${results.length - failed.length} passed, ${failed.length} failed`)
 process.exit(failed.length ? 1 : 0)

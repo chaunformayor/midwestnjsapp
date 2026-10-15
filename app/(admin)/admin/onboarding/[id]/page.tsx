@@ -6,6 +6,8 @@ import { ensurePeople, getEngagement, personLink } from '@/lib/onboarding/server
 import { folderWebUrl, validationPageUrl } from '@/lib/nextcloud'
 import { fmtDateTime } from '@/lib/utils'
 import EngagementActions from '@/components/onboarding/EngagementActions'
+import ReviewPanel from '@/components/onboarding/ReviewPanel'
+import { latestReview } from '@/lib/onboarding/review/service'
 import { AgreementChip, Chip, PersonDocsChip, PersonQuestionnaireChip } from '@/components/onboarding/StatusChips'
 
 export const dynamic = 'force-dynamic'
@@ -20,6 +22,8 @@ export default async function EngagementPage({ params, searchParams }: { params:
   const people = await ensurePeople(e)
   const signers = e.signers_status ?? []
   const signed = e.status === 'signed' || e.status === 'submitted'
+  const review = await latestReview(e.id).catch(() => null)
+  const anySubmitted = people.some((p) => p.submitted_at)
   let verifyUrl: string | null = null
   try {
     if (signed && e.libresign_uuid) verifyUrl = validationPageUrl(e.libresign_uuid)
@@ -148,6 +152,10 @@ export default async function EngagementPage({ params, searchParams }: { params:
             <p className="text-sm text-gray-600">{e.focus}</p>
           </section>
         </aside>
+
+        <div className="lg:col-span-2">
+          <ReviewPanel id={e.id} initial={review} canRun={anySubmitted} aiReady={Boolean((process.env.ANTHROPIC_API_KEY ?? '').trim())} hasFolder={Boolean(e.nextcloud_folder)} readyNote="The review can run once at least one person has submitted their questionnaire." />
+        </div>
       </div>
     </div>
   )

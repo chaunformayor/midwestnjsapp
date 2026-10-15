@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@aws-sdk/client-sesv2": "^3.1111.0",
     "@hookform/resolvers": "^3.9.0",
     "@supabase/ssr": "^0.12.4",
@@ -30,7 +31,7 @@
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.54.1",
     "tailwind-merge": "^2.5.5",
-    "zod": "^3.23.8"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.15",

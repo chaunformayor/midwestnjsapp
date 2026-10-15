@@ -335,3 +335,70 @@ export async function certificatePdf(c: CertificateInput): Promise<Buffer> {
   )
   return finish(doc, 'Signing Certificate')
 }
+
+export type ReviewPdfInput = {
+  household: string
+  engagement: string
+  date: string
+  items: { title: string; text: string; urgency: 'now' | 'soon' | 'later'; owner: string }[]
+}
+
+const URGENCY_HEADING = { now: 'Start now', soon: 'Next', later: 'Later' } as const
+const OWNER_LABEL: Record<string, string> = {
+  mis: 'Midwest Investor Services', attorney: 'Your attorney', cpa: 'Your CPA', 'insurance agent': 'Your insurance agent', lender: 'Your lender', client: 'You',
+}
+
+/** The recommendations the owner chose to share, in plain language. No scores or internal notes. */
+export async function reviewPdf(r: ReviewPdfInput): Promise<Buffer> {
+  const doc = newDoc(`Your Recommendations - ${r.household}`)
+  const W = contentWidth(doc)
+  const X = MARGIN.left
+  doc.font(BOLD).fontSize(8).fillColor(GOLD).text('MIDWEST INVESTOR SERVICES', X, doc.y, { characterSpacing: 1.2 })
+  doc.moveDown(0.35)
+  doc.font(HEAD).fontSize(21).fillColor(NAVY).text('Your Recommendations', X, doc.y, { width: W })
+  doc.moveDown(0.4)
+  doc.font(REG).fontSize(10).fillColor(GREY).text(`${r.household} · ${r.engagement} · ${r.date}`, X, doc.y, { width: W })
+  doc.moveDown(0.8)
+  doc.font(REG).fontSize(10).fillColor(INK).text(
+    'Thank you for completing your onboarding. Based on what you told us, these are the steps we suggest, starting with the ones that matter most. We will walk through them with you at our strategy meeting.',
+    X, doc.y, { width: W, lineGap: 2.2 },
+  )
+  doc.moveDown(0.8)
+
+  for (const u of ['now', 'soon', 'later'] as const) {
+    const list = r.items.filter((x) => x.urgency === u)
+    if (!list.length) continue
+    ensureSpace(doc, 90)
+    doc.font(BOLD).fontSize(11).fillColor(NAVY).text(URGENCY_HEADING[u], X, doc.y, { width: W })
+    doc.moveDown(0.25)
+    doc.moveTo(X, doc.y).lineTo(X + W, doc.y).lineWidth(0.6).strokeColor(LINE).stroke()
+    doc.moveDown(0.5)
+    list.forEach((it, i) => {
+      doc.font(BOLD).fontSize(10.5)
+      const ht = doc.heightOfString(it.title, { width: W })
+      doc.font(REG).fontSize(10)
+      const hb = doc.heightOfString(it.text, { width: W, lineGap: 2.2 })
+      ensureSpace(doc, ht + Math.min(hb, 60) + 24)
+      doc.font(BOLD).fontSize(10.5).fillColor(INK).text(it.title, X, doc.y, { width: W })
+      doc.moveDown(0.2)
+      doc.font(REG).fontSize(10).fillColor(INK).text(it.text, X, doc.y, { width: W, lineGap: 2.2 })
+      const who = OWNER_LABEL[it.owner.trim().toLowerCase()] ?? it.owner
+      if (who) {
+        doc.moveDown(0.2)
+        doc.font(REG).fontSize(8.5).fillColor(GREY).text(`Who helps: ${who}`, X, doc.y, { width: W })
+      }
+      doc.moveDown(0.9)
+      void i
+    })
+  }
+
+  ensureSpace(doc, 120)
+  doc.moveDown(0.4)
+  doc.moveTo(X, doc.y).lineTo(X + W, doc.y).lineWidth(0.6).strokeColor(LINE).stroke()
+  doc.moveDown(0.5)
+  doc.font(REG).fontSize(8.5).fillColor(GREY).text(
+    'Midwest Investor Services is not a law firm, accounting firm, or registered investment adviser. We do not draft legal documents or give legal or tax opinions. These recommendations are practical planning steps to discuss with your attorney, CPA, insurance agent and lender before acting on them. Questions? Call 636-590-7698 or email info@midwestinvestorservices.com.',
+    X, doc.y, { width: W, lineGap: 2 },
+  )
+  return finish(doc, `Your Recommendations · ${r.household}`)
+}

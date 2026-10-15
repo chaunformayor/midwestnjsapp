@@ -27,9 +27,12 @@ export default async function OnboardingListPage() {
           <h1 className="font-head text-navy text-3xl">Client Onboarding</h1>
           <p className="text-gray-500 text-sm mt-1">Private links for new clients: agreements, questionnaire, and documents.</p>
         </div>
-        <Link href="/admin/onboarding/new" className="inline-flex items-center gap-2 bg-gold text-navy font-semibold text-sm px-5 py-3 rounded hover:bg-gold-dark transition">
-          <Plus className="w-4 h-4" /> New client
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link href="/admin/onboarding/weights" className="text-sm font-semibold text-navy underline underline-offset-2 hover:text-gold-dark">Review weights</Link>
+          <Link href="/admin/onboarding/new" className="inline-flex items-center gap-2 bg-gold text-navy font-semibold text-sm px-5 py-3 rounded hover:bg-gold-dark transition">
+            <Plus className="w-4 h-4" /> New client
+          </Link>
+        </div>
       </div>
 
       {loadError && (

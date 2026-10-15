@@ -43,6 +43,7 @@ ACCESS="$(awk '/^ACCESS /{print $2}' "$OUT/mock.log")"
 cd "$ROOT"
 NEXTCLOUD_URL=http://127.0.0.1:8899 NEXTCLOUD_USER=mis-signing NEXTCLOUD_APP_PASSWORD=app-pass MIS_SIGNER_ACCOUNT=chaun \
 SMTP_HOST="${SMTP_HOST:-}" SMTP_PORT=2525 SMTP_USER=smtp-user SMTP_PASSWORD=smtp-pass SMTP_FROM='MIS Test <sender@example.com>' \
+ANTHROPIC_API_KEY=sk-test ANTHROPIC_BASE_URL=http://127.0.0.1:8899 \
 AWS_ENDPOINT_URL=http://127.0.0.1:8899 AWS_ENDPOINT_URL_SESV2=http://127.0.0.1:8899 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_SES_REGION=us-east-1 \
 ADMIN_EMAIL=admin@example.com \
   node_modules/.bin/next start -p 3000 -H 127.0.0.1 > "$OUT/next.log" 2>&1 & PIDS+=($!)

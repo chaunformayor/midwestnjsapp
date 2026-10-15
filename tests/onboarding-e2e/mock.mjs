@@ -4,12 +4,13 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 
 const PORT = 8899
-const db = { onboarding_engagements: [], onboarding_people: [], onboarding_settings: [{ id: 1, entity_type: '', office_address: '', signer_name: 'Chaun', signer_title: '' }], profiles: [{ id: 'admin-1', email: 'admin@example.com', role: 'admin' }] }
+const db = { onboarding_engagements: [], onboarding_people: [], onboarding_reviews: [], onboarding_settings: [{ id: 1, entity_type: '', office_address: '', signer_name: 'Chaun', signer_title: '' }], profiles: [{ id: 'admin-1', email: 'admin@example.com', role: 'admin' }] }
 const files = new Map() // path -> Buffer
 const dirs = new Set()
 const uploads = new Map() // id -> Map(name -> Buffer)
 const ls = new Map() // uuid -> file
 const emails = []
+const anthropic = [] // requests the site made to the (pretend) Anthropic API
 const log = []
 const NC_USER = 'mis-signing'
 const AUTH = 'Basic ' + Buffer.from('mis-signing:app-pass').toString('base64')
@@ -49,6 +50,9 @@ function defaults(table, row) {
     return { id: randomUUID(), status: 'invited', modules: [], pay_methods: [], fees: {}, docs_total: 0, docs_done: 0, invited_at: now, last_activity_at: now, created_at: now, updated_at: now,
       spouse_name: null, spouse_email: null, sign_details: null, libresign_uuid: null, libresign_status: null, signers_status: null, nextcloud_folder: null, questionnaire_part: null,
       sent_for_signature_at: null, signed_at: null, submitted_at: null, created_by: null, token_enc: null, ...row }
+  }
+  if (table === 'onboarding_reviews') {
+    return { id: randomUUID(), created_by: null, model: '', weights: {}, scores: {}, review: {}, included: [], client_pdf_at: null, created_at: now + Math.random().toString().slice(1, 4), updated_at: now, ...row }
   }
   if (table === 'onboarding_people') {
     return { id: randomUUID(), token_hash: null, token_enc: null, nextcloud_folder: null, questionnaire_part: null, docs_total: 0, docs_done: 0, submitted_at: null,
@@ -189,7 +193,7 @@ const server = http.createServer(async (req, res) => {
   log.push(`${req.method} ${p}${url.search.length > 120 ? url.search.slice(0, 120) + '…' : url.search}`)
 
   // mock controls
-  if (p === '/__mock/state') return send(res, 200, { db, files: [...files.keys()].map((k) => [k, files.get(k).length]), dirs: [...dirs], emails, notifies, ls: [...ls.values()].map(lsView), log: log.slice(-80) })
+  if (p === '/__mock/state') return send(res, 200, { db, files: [...files.keys()].map((k) => [k, files.get(k).length]), dirs: [...dirs], emails, notifies, anthropic, ls: [...ls.values()].map(lsView), log: log.slice(-80) })
   if (p === '/__mock/sign-one') {
     const f = [...ls.values()].pop(); const s = f.signers[Number(url.searchParams.get('i') || 0)]
     s.signed = new Date().toISOString(); f.status = 2
@@ -206,6 +210,24 @@ const server = http.createServer(async (req, res) => {
     const b = JSON.parse(raw.toString() || '{}')
     emails.push({ to: b.Destination?.ToAddresses, subject: b.Content?.Simple?.Subject?.Data, html: b.Content?.Simple?.Body?.Html?.Data })
     return send(res, 200, { MessageId: randomUUID() })
+  }
+
+  // Anthropic Messages API (the AI review)
+  if (p === '/v1/messages' && req.method === 'POST') {
+    const b = JSON.parse(raw.toString() || '{}')
+    anthropic.push({ headers: { beta: req.headers['anthropic-beta'], key: req.headers['x-api-key'] }, body: b })
+    const review = {
+      summary: 'Mock review summary.',
+      priorities: [
+        { id: 'r1', title: 'Move the condo into an LLC', rationale: 'Held in sole name and used as a short-term rental.', dimension: 'liability', urgency: 'now', owner: 'attorney', next_step: 'Ask the attorney about an LLC.', confidence: 'high', client_text: 'Your condo is a short-term rental owned in your own name. Ask your attorney whether an LLC makes sense.' },
+        { id: 'r2', title: 'Sign a will', rationale: 'No will on file.', dimension: 'estate', urgency: 'soon', owner: 'attorney', next_step: 'Schedule a will.', confidence: 'medium', client_text: 'A will keeps your wishes clear for your family.' },
+      ],
+      couple_notes: [{ topic: 'How title is held', detail: 'They answered differently.', suggested_question: 'How is title actually held?' }],
+      missing_information: ['Insurance policy'],
+      meeting_questions: ['What worries you most?'],
+      cautions: ['Do not promise liability protection.'],
+    }
+    return send(res, 200, { id: 'msg_mock', type: 'message', role: 'assistant', model: b.model, content: [{ type: 'text', text: JSON.stringify(review) }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 } })
   }
 
   // Supabase auth
