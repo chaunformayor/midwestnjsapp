@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, KanbanSquare, Inbox, Users, FileText,
-  Mail, BookOpen, LogOut, ChevronRight
+  Mail, BookOpen, LogOut, ChevronRight, ClipboardCheck
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createBrowserClient } from '@/lib/supabase/client'
@@ -14,6 +14,7 @@ const NAV = [
   { href: '/admin/deals', label: 'Deal Pipeline', icon: KanbanSquare },
   { href: '/admin/leads', label: 'Lead Inbox', icon: Inbox },
   { href: '/admin/investors', label: 'Investors', icon: Users },
+  { href: '/admin/onboarding', label: 'Client Onboarding', icon: ClipboardCheck },
   { href: '/admin/blog', label: 'Blog / Content', icon: FileText },
   { href: '/admin/subscribers', label: 'Subscribers', icon: Mail },
   { href: '/admin/resources', label: 'Resources', icon: BookOpen },

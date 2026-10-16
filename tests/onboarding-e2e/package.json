@@ -1,0 +1,9 @@
+{
+  "name": "onboarding-e2e",
+  "private": true,
+  "description": "Local stand-ins for Supabase, Nextcloud/LibreSign, SES and SMTP, used by run.sh",
+  "dependencies": {
+    "mailparser": "^3.7.2",
+    "smtp-server": "^3.13.6"
+  }
+}

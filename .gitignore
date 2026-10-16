@@ -20,3 +20,6 @@ yarn-error.log*
 # misc
 .DS_Store
 *.pem
+
+# TypeScript build cache
+*.tsbuildinfo
